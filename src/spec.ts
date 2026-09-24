@@ -102,14 +102,14 @@ export const setupSpec = {
     CodexHomeMissing: "Codex config directory not found: {0}. Run Codex CLI once or set CODEX_HOME, then try again.",
   },
   typeStyles: {
-    Title: { marker: "", powershellColor: "Cyan", ansiColor: 36 },
-    Ordered: { marker: "", powershellColor: "Cyan", ansiColor: 36 },
+    Title: { marker: "", powershellColor: "Magenta", ansiColor: 95 },
+    Ordered: { marker: "", powershellColor: "Blue", ansiColor: 34 },
     Info: { marker: "i", powershellColor: "Cyan", ansiColor: 36 },
     Detail: { marker: "i", powershellColor: "DarkGray", ansiColor: 90 },
     Success: { marker: "+", powershellColor: "Green", ansiColor: 32 },
     Warning: { marker: "!", powershellColor: "Yellow", ansiColor: 33 },
     Error: { marker: "X", powershellColor: "Red", ansiColor: 31 },
-    Prompt: { marker: "?", powershellColor: "Cyan", ansiColor: 36 },
-    Change: { marker: "~", powershellColor: "Cyan", ansiColor: 36 },
+    Prompt: { marker: "?", powershellColor: "DarkMagenta", ansiColor: 35 },
+    Change: { marker: "~", powershellColor: "DarkCyan", ansiColor: 96 },
   },
 } as const satisfies SetupSpec;

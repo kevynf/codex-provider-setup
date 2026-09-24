@@ -73,11 +73,20 @@ try {
     }
 
     Invoke-Test 'PowerShell message types own their colors' {
+        $colors = @(
+            $TYPE_STYLES.Values | ForEach-Object {
+                $_.Color
+            }
+        )
+        $uniqueColorCount = @($colors | Sort-Object -Unique).Count
+        Assert-Equal $TYPE_STYLES.Count $uniqueColorCount 'Message type colors are not unique'
         Assert-Equal ([ConsoleColor]::Green) $TYPE_STYLES.Success.Color 'Success color differs'
         Assert-Equal ([ConsoleColor]::Yellow) $TYPE_STYLES.Warning.Color 'Warning color differs'
         Assert-Equal ([ConsoleColor]::Red) $TYPE_STYLES.Error.Color 'Error color differs'
-        Assert-Equal ([ConsoleColor]::Cyan) $TYPE_STYLES.Title.Color 'Title color differs'
-        Assert-Equal ([ConsoleColor]::Cyan) $TYPE_STYLES.Ordered.Color 'Ordered type color differs'
+        Assert-Equal ([ConsoleColor]::Magenta) $TYPE_STYLES.Title.Color 'Title color differs'
+        Assert-Equal ([ConsoleColor]::Blue) $TYPE_STYLES.Ordered.Color 'Ordered type color differs'
+        Assert-Equal ([ConsoleColor]::DarkMagenta) $TYPE_STYLES.Prompt.Color 'Prompt color differs'
+        Assert-Equal ([ConsoleColor]::DarkCyan) $TYPE_STYLES.Change.Color 'Change color differs'
         Assert-True (
             -not (Get-Command Write-Message).Parameters.ContainsKey('Color')
         ) 'Message callers can override colors'

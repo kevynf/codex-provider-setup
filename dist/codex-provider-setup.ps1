@@ -94,15 +94,15 @@ $MESSAGES = @{
     CodexHomeMissing = 'Codex config directory not found: {0}. Run Codex CLI once or set CODEX_HOME, then try again.'
 }
 $TYPE_STYLES = @{
-    Title = [pscustomobject]@{ Marker = ''; Color = [ConsoleColor]::Cyan }
-    Ordered = [pscustomobject]@{ Marker = ''; Color = [ConsoleColor]::Cyan }
+    Title = [pscustomobject]@{ Marker = ''; Color = [ConsoleColor]::Magenta }
+    Ordered = [pscustomobject]@{ Marker = ''; Color = [ConsoleColor]::Blue }
     Info = [pscustomobject]@{ Marker = 'i'; Color = [ConsoleColor]::Cyan }
     Detail = [pscustomobject]@{ Marker = 'i'; Color = [ConsoleColor]::DarkGray }
     Success = [pscustomobject]@{ Marker = '+'; Color = [ConsoleColor]::Green }
     Warning = [pscustomobject]@{ Marker = '!'; Color = [ConsoleColor]::Yellow }
     Error = [pscustomobject]@{ Marker = 'X'; Color = [ConsoleColor]::Red }
-    Prompt = [pscustomobject]@{ Marker = '?'; Color = [ConsoleColor]::Cyan }
-    Change = [pscustomobject]@{ Marker = '~'; Color = [ConsoleColor]::Cyan }
+    Prompt = [pscustomobject]@{ Marker = '?'; Color = [ConsoleColor]::DarkMagenta }
+    Change = [pscustomobject]@{ Marker = '~'; Color = [ConsoleColor]::DarkCyan }
 }
 
 function Get-Message {

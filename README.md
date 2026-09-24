@@ -23,23 +23,22 @@ Both scripts preserve unrelated settings and keep a restorable backup in `$CODEX
 
 `src/spec.ts` is the source of truth for model presets, messages, versions, markers, and colors. The generator combines it with platform runtime templates and writes complete standalone scripts to `dist/`.
 
-```text
-UI
-├── Interaction
-│   ├── InputUI
-│   │   ├── Message | Table
-│   │   └── Input
-│   └── FeedbackUI
-│       └── Message | Table
-└── Style
-    ├── Message(Type, Content)
-    ├── Table(Title, Message[])
-    │   ├── Ordered
-    │   └── Unordered
-    └── Input(Message)
-```
+The scripts organize the UI into two related layers: interaction flow and rendering:
 
-`Message` renders table rows and input prompts. Types control colors, and Interaction controls spacing.
+```text
+Interaction model
+├── Input interaction
+│   ├── Message | Table
+│   └── Input
+└── Feedback interaction
+    └── Message | Table
+
+Rendering model
+├── Message(Type, Content)
+├── Table(Title, Message[])
+│   └── Ordered | Unordered
+└── Input(Message)
+```
 
 ## Development
 

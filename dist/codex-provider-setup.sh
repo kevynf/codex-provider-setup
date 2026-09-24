@@ -117,17 +117,17 @@ message() {
 }
 load_type_style() {
   case $1 in
-    Title) TYPE_MARKER=''; TYPE_COLOR='36' ;;
-    Ordered) TYPE_MARKER=''; TYPE_COLOR='36' ;;
+    Title) TYPE_MARKER=''; TYPE_COLOR='95' ;;
+    Ordered) TYPE_MARKER=''; TYPE_COLOR='34' ;;
     Info) TYPE_MARKER='i'; TYPE_COLOR='36' ;;
     Detail) TYPE_MARKER='i'; TYPE_COLOR='90' ;;
     Success) TYPE_MARKER='+'; TYPE_COLOR='32' ;;
     Warning) TYPE_MARKER='!'; TYPE_COLOR='33' ;;
     Error) TYPE_MARKER='X'; TYPE_COLOR='31' ;;
-    Prompt) TYPE_MARKER='?'; TYPE_COLOR='36' ;;
-    Change) TYPE_MARKER='~'; TYPE_COLOR='36' ;;
+    Prompt) TYPE_MARKER='?'; TYPE_COLOR='35' ;;
+    Change) TYPE_MARKER='~'; TYPE_COLOR='96' ;;
     ''|*[!0-9]*) return 1 ;;
-    *) TYPE_MARKER=$1; TYPE_COLOR='36' ;;
+    *) TYPE_MARKER=$1; TYPE_COLOR='34' ;;
   esac
 }
 
