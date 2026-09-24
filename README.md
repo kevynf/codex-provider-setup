@@ -17,7 +17,7 @@ irm https://kevynf.github.io/codex-provider-setup/setup.ps1 | iex
 curl -fsSL https://kevynf.github.io/codex-provider-setup/setup.sh | sh
 ```
 
-Both scripts preserve unrelated settings and keep a restorable backup. API keys remain in plain text in `config.toml` and are never added to the backup manifest.
+Both scripts preserve unrelated settings and keep a restorable backup in `$CODEX_HOME/.provider-backup` (or `~/.codex/.provider-backup` when `CODEX_HOME` is unset). API keys remain in plain text in `config.toml` and are never added to the backup manifest.
 
 ## Architecture
 

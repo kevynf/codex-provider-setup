@@ -338,7 +338,7 @@ try {
   test("Configure and restore preserve the initial config", () => {
     const caseRoot = resolve(testRoot, "lifecycle");
     const configPath = resolve(caseRoot, "config.toml");
-    const backupDir = resolve(caseRoot, "backup-codex-provider-setup");
+    const backupDir = resolve(caseRoot, ".provider-backup");
     const backupConfig = resolve(backupDir, "config.toml");
     const manifestPath = resolve(backupDir, "manifest.txt");
     const original = 'approval_policy = "never"\n';
@@ -366,7 +366,7 @@ try {
 
   test("Restore succeeds when the generated config is already absent", () => {
     const caseRoot = resolve(testRoot, "restore-absent");
-    const backupDir = resolve(caseRoot, "backup-codex-provider-setup");
+    const backupDir = resolve(caseRoot, ".provider-backup");
     mkdirSync(backupDir, { recursive: true });
     writeFileSync(resolve(backupDir, "manifest.txt"), "original_config_existed=0\n", "utf8");
 
