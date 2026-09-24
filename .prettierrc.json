@@ -1,0 +1,24 @@
+{
+  "plugins": ["prettier-plugin-sh", "prettier-plugin-powershell"],
+  "endOfLine": "lf",
+  "printWidth": 120,
+  "proseWrap": "preserve",
+  "tabWidth": 2,
+  "useTabs": false,
+  "overrides": [
+    {
+      "files": ["*.ps1", "*.ps1.tmpl"],
+      "options": {
+        "parser": "powershell",
+        "tabWidth": 4
+      }
+    },
+    {
+      "files": ["*.sh", "*.sh.tmpl"],
+      "options": {
+        "parser": "sh",
+        "tabWidth": 2
+      }
+    }
+  ]
+}

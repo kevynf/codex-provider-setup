@@ -1,0 +1,25 @@
+{
+  "name": "codex-provider-setup",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.4.1",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "generate": "pnpm run build && node .build/generate.js",
+    "check:generated": "pnpm run build && node .build/generate.js --check",
+    "fmt": "prettier --write . && pnpm generate",
+    "fmt:check": "prettier --check . && pnpm check:generated",
+    "test:powershell": "pnpm run build && node .build/runtime-tests.js powershell && pwsh -NoProfile -File ./tests/powershell/codex-provider-setup.Tests.ps1",
+    "test:windows-powershell": "pnpm run build && node .build/runtime-tests.js windows-powershell && powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tests/powershell/codex-provider-setup.Tests.ps1",
+    "test:shell": "pnpm run build && node .build/runtime-tests.js shell && node .build/run-shell-tests.js",
+    "test": "pnpm run check:generated && pnpm run test:powershell && pnpm run test:shell"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.6",
+    "prettier": "3.9.9",
+    "prettier-plugin-powershell": "2.1.12",
+    "prettier-plugin-sh": "0.19.0",
+    "typescript": "5.9.3"
+  }
+}
