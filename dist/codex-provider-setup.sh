@@ -899,7 +899,9 @@ load_provider_record() {
   RECORD_REASONING=$MANIFEST_FIELD_VALUE
   manifest_field "provider_${record_number}_context_window"
   RECORD_CONTEXT=$MANIFEST_FIELD_VALUE
-  [ -n "$RECORD_ID" ] && [ -n "$RECORD_MODEL" ] || stop_setup "$(message BackupManifestInvalid)"
+  if [ -z "$RECORD_ID" ] || [ -z "$RECORD_MODEL" ]; then
+    stop_setup "$(message BackupManifestInvalid)"
+  fi
 }
 
 write_manifest() {
