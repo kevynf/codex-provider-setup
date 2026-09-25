@@ -26,26 +26,22 @@ case $action in
   transform)
     input_path=$1
     output_path=$2
-    report_path=$3
-    SELECTED_PROVIDER=$4
-    SELECTED_BASE_URL=$5
-    SELECTED_MODEL=$6
-    SELECTED_REASONING_EFFORT=$7
-    SELECTED_CONTEXT_WINDOW=$8
-    API_KEY=$9
+    SELECTED_PROVIDER=$3
+    SELECTED_BASE_URL=$4
+    SELECTED_MODEL=$5
+    SELECTED_REASONING_EFFORT=$6
+    SELECTED_CONTEXT_WINDOW=$7
+    API_KEY=$8
+    SELECTED_PROVIDER_ID=codex_provider_setup_1
     escaped_model=$(toml_escape "$SELECTED_MODEL")
     transform_config \
       "$input_path" \
       "$output_path" \
-      "$report_path" \
       "$escaped_model" \
       "$SELECTED_REASONING_EFFORT" \
-      "$SELECTED_CONTEXT_WINDOW"
+      "$SELECTED_CONTEXT_WINDOW" \
+      "$SELECTED_PROVIDER_ID"
     write_managed_provider "$output_path"
-    ;;
-  contains-managed-provider)
-    CONFIG_PATH=$1
-    if contains_managed_provider; then printf true; else printf false; fi
     ;;
   resolve-base-url)
     resolve_base_url "$1" > /dev/null
@@ -92,12 +88,34 @@ case $action in
     SELECTED_CONTEXT_WINDOW=$6
     API_KEY=$7
     read_api_key() { :; }
+    read_choice() { CHOICE_VALUE=${CODEX_PROVIDER_SETUP_TEST_CONFIRM:-1}; }
     invoke_configure
     ;;
   restore)
     set_codex_home "$1"
     read_choice() { CHOICE_VALUE=1; }
     invoke_restore
+    ;;
+  switch-provider)
+    set_codex_home "$1"
+    read_choice() { CHOICE_VALUE=${CODEX_PROVIDER_SETUP_TEST_CONFIRM:-1}; }
+    invoke_switch
+    ;;
+  remove-provider)
+    set_codex_home "$1"
+    remove_choice_read=0
+    read_choice() {
+      if [ "$remove_choice_read" -eq 0 ]; then
+        CHOICE_VALUE=${CODEX_PROVIDER_SETUP_TEST_CONFIRM:-1}
+        remove_choice_read=1
+      else
+        CHOICE_VALUE=1
+      fi
+    }
+    invoke_remove
+    ;;
+  menu-items)
+    setup_menu_items
     ;;
   *)
     printf 'Unknown adapter action: %s\n' "$action" >&2

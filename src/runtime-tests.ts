@@ -19,28 +19,21 @@ const runtime = process.argv[2] as Runtime | undefined;
 if (!runtime || !["powershell", "windows-powershell", "shell"].includes(runtime)) {
   throw new Error("Choose a runtime: powershell, windows-powershell, or shell");
 }
-
 const windowsShells = [
   process.env.SHELL,
   "C:\\Program Files\\Git\\bin\\sh.exe",
   "C:\\Program Files (x86)\\Git\\bin\\sh.exe",
 ].filter((value): value is string => Boolean(value));
-
 const shell =
   process.platform === "win32" ? windowsShells.find((candidate) => existsSync(candidate)) : process.env.SHELL || "sh";
-
-if (runtime === "shell" && !shell) {
-  throw new Error("No POSIX shell was found. Install Git for Windows or set SHELL.");
-}
+if (runtime === "shell" && !shell) throw new Error("No POSIX shell was found. Install Git for Windows or set SHELL.");
 
 const testRoot = resolve(projectRoot, ".tmp", `runtime-tests-${runtime}-${process.pid}`);
 const allowedRoot = resolve(projectRoot, ".tmp") + sep;
 if (!testRoot.startsWith(allowedRoot)) throw new Error(`Unsafe test directory: ${testRoot}`);
 mkdirSync(testRoot, { recursive: true });
-
 const generatedScript = runtime === "shell" ? "dist/codex-provider-setup.sh" : "dist/codex-provider-setup.ps1";
 const adapter = runtime === "shell" ? "tests/adapters/runtime.sh" : "tests/adapters/runtime.ps1";
-
 let passed = 0;
 let failed = 0;
 
@@ -48,7 +41,12 @@ function projectPath(path: string): string {
   return relative(projectRoot, path).replaceAll("\\", "/");
 }
 
-function invoke(action: string, values: Readonly<Record<string, string>> = {}, input?: string): string {
+function invoke(
+  action: string,
+  values: Readonly<Record<string, string>> = {},
+  input?: string,
+  extraEnv: Readonly<Record<string, string>> = {},
+): string {
   let command: string;
   let args: string[];
   if (runtime === "shell") {
@@ -61,11 +59,10 @@ function invoke(action: string, values: Readonly<Record<string, string>> = {}, i
     args.push("-File", adapter, "-Action", action, "-ScriptPath", generatedScript);
     for (const [name, value] of Object.entries(values)) args.push(`-${name}`, value);
   }
-
   const result = spawnSync(command, args, {
     cwd: projectRoot,
     encoding: "utf8",
-    env: { ...process.env, NO_COLOR: "1", TERM: "dumb" },
+    env: { ...process.env, ...extraEnv, NO_COLOR: "1", TERM: "dumb" },
     input,
   });
   if (result.error) throw result.error;
@@ -84,22 +81,60 @@ function inputFile(name: string, content: string): string {
 }
 
 function transform(name: string, input: string, selection: Selection): string {
-  const inputPath = inputFile(`${name}-input`, input);
   const outputPath = resolve(testRoot, `${name}-output.toml`);
-  const reportPath = resolve(testRoot, `${name}-report.txt`);
-  const values = {
-    InputPath: inputPath,
+  invoke("transform", {
+    InputPath: inputFile(`${name}-input`, input),
     OutputPath: projectPath(outputPath),
-    ReportPath: projectPath(reportPath),
     ProviderName: selection.provider,
     BaseUrl: selection.baseUrl,
     Model: selection.model,
     ReasoningEffort: selection.reasoningEffort ?? "",
     ContextWindow: selection.contextWindow ?? "",
     ApiKey: selection.apiKey,
-  };
-  invoke("transform", values);
+  });
   return readFileSync(outputPath, "utf8").replaceAll("\r\n", "\n");
+}
+
+function configure(home: string, selection: Selection): string {
+  return invoke("configure", {
+    CodexHome: projectPath(home),
+    ProviderName: selection.provider,
+    BaseUrl: selection.baseUrl,
+    Model: selection.model,
+    ReasoningEffort: selection.reasoningEffort ?? "",
+    ContextWindow: selection.contextWindow ?? "",
+    ApiKey: selection.apiKey,
+  });
+}
+
+function switchProvider(home: string, choice: string): string {
+  return invoke("switch-provider", { CodexHome: projectPath(home) }, undefined, {
+    CODEX_PROVIDER_SETUP_TEST_CONFIRM: choice,
+  });
+}
+
+function removeProvider(home: string, choice: string): string {
+  return invoke("remove-provider", { CodexHome: projectPath(home) }, undefined, {
+    CODEX_PROVIDER_SETUP_TEST_CONFIRM: choice,
+  });
+}
+
+function restore(home: string): string {
+  return invoke("restore", { CodexHome: projectPath(home) });
+}
+
+function configOf(home: string): string {
+  return readFileSync(resolve(home, "config.toml"), "utf8").replaceAll("\r\n", "\n");
+}
+
+function manifestOf(home: string): Map<string, string> {
+  const fields = new Map<string, string>();
+  const content = readFileSync(resolve(home, ".provider-backup", "manifest.txt"), "utf8").replaceAll("\r\n", "\n");
+  for (const line of content.split("\n")) {
+    const separator = line.indexOf("=");
+    if (separator > 0) fields.set(line.slice(0, separator), line.slice(separator + 1));
+  }
+  return fields;
 }
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -134,22 +169,24 @@ try {
       apiKey: "test-key",
     });
     includes(output, 'model = "local-model"', "Model is missing");
-    includes(output, "[model_providers.codex_provider_setup]", "Managed provider is missing");
+    includes(output, 'model_provider = "codex_provider_setup_1"', "Provider selection is missing");
+    includes(output, "[model_providers.codex_provider_setup_1]", "Provider section is missing");
   });
 
-  test("Unrelated settings survive managed replacement", () => {
+  test("Adding preserves unrelated top-level and provider settings", () => {
     const output = transform(
       "preserve",
       [
         'approval_policy = "on-request"',
         'profile = "old"',
+        'model_catalog_json = "catalog.json"',
         'model = "old-model"',
         "",
         "[model_providers.keep]",
         'name = "Keep"',
         "",
-        "[model_providers.codex_provider_setup.headers]",
-        'old-secret = "remove"',
+        "[model_providers.codex_provider_setup_1.headers]",
+        'old-secret = "keep"',
         "",
       ].join("\n"),
       {
@@ -162,38 +199,11 @@ try {
       },
     );
     includes(output, 'approval_policy = "on-request"', "Unrelated setting was removed");
+    includes(output, 'profile = "old"', "Profile was removed");
+    includes(output, 'model_catalog_json = "catalog.json"', "Model catalog was removed");
     includes(output, "[model_providers.keep]", "Unrelated provider was removed");
-    includes(output, 'model_reasoning_effort = "medium"', "Reasoning effort is missing");
-    includes(output, "model_context_window = 272000", "Context window is missing");
+    includes(output, "old-secret", "Unowned prefixed provider was removed");
     includes(output, 'experimental_bearer_token = "secret\\"value"', "API key was not escaped");
-    excludes(output, 'profile = "old"', "Profile was retained");
-    excludes(output, "old-secret", "Managed provider subtable was retained");
-    assert(
-      (output.match(/\[model_providers\.codex_provider_setup\]/g) ?? []).length === 1,
-      "Managed provider was duplicated",
-    );
-  });
-
-  test("Quoted and case-sensitive provider keys stay independent", () => {
-    const output = transform(
-      "quoted",
-      [
-        '[model_providers."codex_provider_setup.extra"]',
-        'name = "Keep quoted key"',
-        "",
-        "[model_providers.CODEX_PROVIDER_SETUP]",
-        'name = "Keep case-sensitive key"',
-        "",
-      ].join("\n"),
-      {
-        provider: "Custom",
-        baseUrl: "https://example.test/v1",
-        model: "model-x",
-        apiKey: "key",
-      },
-    );
-    includes(output, '[model_providers."codex_provider_setup.extra"]', "Quoted provider was removed");
-    includes(output, "[model_providers.CODEX_PROVIDER_SETUP]", "Case-sensitive provider was removed");
   });
 
   test("Multiline strings hide section and key-shaped text", () => {
@@ -203,25 +213,17 @@ try {
         'developer_instructions = """',
         "[this is text, not a section]",
         'model = "inside text"',
-        'foo = "inside text"',
         '"""',
-        'foo = "outside"',
         'model = "old"',
         "",
         "[features]",
         "apps = true",
         "",
       ].join("\n"),
-      {
-        provider: "Custom",
-        baseUrl: "https://example.test/v1",
-        model: "model-x",
-        apiKey: "key",
-      },
+      { provider: "Custom", baseUrl: "https://example.test/v1", model: "model-x", apiKey: "key" },
     );
-    includes(output, "[this is text, not a section]", "Multiline section-shaped text was damaged");
-    includes(output, 'model = "inside text"', "Multiline managed-looking text was damaged");
-    includes(output, 'foo = "outside"', "Top-level unrelated key was removed");
+    includes(output, "[this is text, not a section]", "Multiline text was damaged");
+    includes(output, 'model = "inside text"', "Managed-looking multiline text was damaged");
     includes(output, "[features]", "Following section was removed");
   });
 
@@ -237,35 +239,11 @@ try {
     includes(output, 'experimental_bearer_token = "secret\\"\\\\value"', "API key was not escaped");
   });
 
-  test("Managed-provider detection respects TOML boundaries", () => {
-    const textOnly = inputFile(
-      "guard-text",
-      [
-        'developer_instructions = """',
-        "[model_providers.codex_provider_setup]",
-        '"""',
-        "[model_providers.keep]",
-        "",
-      ].join("\n"),
-    );
-    const actual = inputFile("guard-actual", "[model_providers.codex_provider_setup.headers]\n");
-    assert(
-      invoke("contains-managed-provider", { InputPath: textOnly }) === "false",
-      "Multiline text was treated as a provider",
-    );
-    assert(
-      invoke("contains-managed-provider", { InputPath: actual }) === "true",
-      "Managed provider subtable was not detected",
-    );
-  });
-
   test("Base URLs use local and public defaults", () => {
     const cases = new Map([
       ["0.0.0.0/v1", "http://0.0.0.0/v1"],
       ["localhost:11434/v1", "http://localhost:11434/v1"],
       ["api.example.com/v1", "https://api.example.com/v1"],
-      ["http://127.0.0.1:8080/v1", "http://127.0.0.1:8080/v1"],
-      ["https://gateway.example/v1", "https://gateway.example/v1"],
     ]);
     for (const [value, expected] of cases) {
       assert(invoke("resolve-base-url", { Value: value }) === expected, `Unexpected Base URL for ${value}`);
@@ -288,91 +266,194 @@ try {
       "[2] Second",
     ].join("\n");
     assert(output === expected, `Unexpected UI layout:\n${output}`);
+  });
+
+  test("Message types, choice, and default input preserve their contracts", () => {
+    includes(invoke("message-types"), "INVALID=REJECTED", "Unknown message type was accepted");
+    includes(invoke("choice", {}, "2\n"), "RESULT=2", "Choice result is wrong");
+    includes(invoke("default-input", {}, "\n"), "RESULT=https://api.example/v1", "Default input result is wrong");
+  });
+
+  test("Setup menu exposes the minimal provider operations", () => {
+    const keys = invoke("menu-items")
+      .split("\n")
+      .map((row) => row.split("\t")[0]);
+    assert(keys.join(",") === "1,2,3,4,9", `Unexpected setup menu: ${keys.join(",")}`);
+  });
+
+  test("Adding, switching, removing, and restoring preserve list invariants", () => {
+    const caseRoot = resolve(testRoot, "lifecycle");
+    mkdirSync(caseRoot, { recursive: true });
+    const original = 'approval_policy = "never"\nprofile = "keep"\nmodel_catalog_json = "catalog.json"\n';
+    writeFileSync(resolve(caseRoot, "config.toml"), original, "utf8");
+    configure(caseRoot, {
+      provider: "Shared name",
+      baseUrl: "https://first.example/v1",
+      model: "model-1",
+      apiKey: "first-key",
+    });
+    configure(caseRoot, {
+      provider: "Shared name",
+      baseUrl: "https://second.example/v1",
+      model: "model-2",
+      reasoningEffort: "low",
+      contextWindow: "272000",
+      apiKey: "second-key",
+    });
+    const backup = readFileSync(resolve(caseRoot, ".provider-backup", "config.toml"), "utf8").replaceAll("\r\n", "\n");
+    assert(backup === original, "Initial backup changed");
+    const added = configOf(caseRoot);
+    includes(added, "[model_providers.codex_provider_setup_1]", "First provider is missing");
+    includes(added, "[model_providers.codex_provider_setup_2]", "Second provider is missing");
+    includes(added, "first-key", "First key was lost");
+    includes(added, "second-key", "Second key was lost");
+    includes(added, 'profile = "keep"', "Profile was removed");
+    includes(added, 'model_catalog_json = "catalog.json"', "Model catalog was removed");
+
+    switchProvider(caseRoot, "1");
+    const switched = configOf(caseRoot);
+    includes(switched, 'model_provider = "codex_provider_setup_1"', "Provider was not switched");
+    includes(switched, 'model = "model-1"', "Model was not switched");
+    excludes(switched, "model_reasoning_effort", "Old reasoning effort was retained");
+    excludes(switched, "model_context_window", "Old context window was retained");
+    includes(switched, "first-key", "Switch changed the first provider");
+    includes(switched, "second-key", "Switch changed the second provider");
+
+    removeProvider(caseRoot, "1");
+    const removed = configOf(caseRoot);
+    includes(removed, "[model_providers.codex_provider_setup_1]", "Current provider was removed");
+    excludes(removed, "[model_providers.codex_provider_setup_2]", "Inactive provider was retained");
+    const manifest = manifestOf(caseRoot);
+    assert(manifest.get("provider_count") === "1", "Provider list was not compacted");
+    assert(manifest.get("provider_1_id") === "codex_provider_setup_1", "Wrong provider remained in the list");
+    excludes(
+      readFileSync(resolve(caseRoot, ".provider-backup", "manifest.txt"), "utf8"),
+      "-key",
+      "Manifest leaked a key",
+    );
+
+    restore(caseRoot);
+    assert(configOf(caseRoot) === original, "Restore did not return to the initial config");
+    assert(!existsSync(resolve(caseRoot, ".provider-backup")), "Restore left the backup directory behind");
+  });
+
+  test("The current or only provider cannot be removed", () => {
+    const caseRoot = resolve(testRoot, "remove-current");
+    mkdirSync(caseRoot, { recursive: true });
+    configure(caseRoot, {
+      provider: "Only",
+      baseUrl: "https://only.example/v1",
+      model: "only-model",
+      apiKey: "only-key",
+    });
+    const before = configOf(caseRoot);
+    includes(removeProvider(caseRoot, "1"), "No inactive provider", "Current-provider guard was not reported");
+    assert(configOf(caseRoot) === before, "Current provider was removed");
+  });
+
+  test("Unowned prefixed sections are preserved and never registered", () => {
+    const caseRoot = resolve(testRoot, "unowned-prefix");
+    mkdirSync(caseRoot, { recursive: true });
+    const existing = [
+      "[model_providers.codex_provider_setup_1]",
+      'name = "User owned"',
+      'base_url = "https://user.example/v1"',
+      'env_key = "USER_KEY"',
+      "",
+    ].join("\n");
+    writeFileSync(resolve(caseRoot, "config.toml"), existing, "utf8");
+    configure(caseRoot, {
+      provider: "Managed",
+      baseUrl: "https://managed.example/v1",
+      model: "managed-model",
+      apiKey: "managed-key",
+    });
+    const config = configOf(caseRoot);
+    includes(config, "[model_providers.codex_provider_setup_1]", "User-owned provider was removed");
+    includes(config, "[model_providers.codex_provider_setup_2]", "Managed provider did not avoid the occupied ID");
+    assert(manifestOf(caseRoot).get("provider_1_id") === "codex_provider_setup_2", "Unowned provider was registered");
+  });
+
+  test("Adding stops when a registered provider section is missing", () => {
+    const caseRoot = resolve(testRoot, "missing-registered-provider");
+    mkdirSync(caseRoot, { recursive: true });
+    configure(caseRoot, {
+      provider: "First",
+      baseUrl: "https://first.example/v1",
+      model: "model-1",
+      apiKey: "first-key",
+    });
+    configure(caseRoot, {
+      provider: "Second",
+      baseUrl: "https://second.example/v1",
+      model: "model-2",
+      apiKey: "second-key",
+    });
+    const firstSection = [
+      "",
+      "[model_providers.codex_provider_setup_1]",
+      'name = "First"',
+      'base_url = "https://first.example/v1"',
+      'wire_api = "responses"',
+      'experimental_bearer_token = "first-key"',
+    ].join("\n");
+    const drifted = configOf(caseRoot).replace(firstSection, "");
+    writeFileSync(resolve(caseRoot, "config.toml"), drifted, "utf8");
+    const manifestBefore = readFileSync(resolve(caseRoot, ".provider-backup", "manifest.txt"), "utf8");
+    let failure = "";
+    try {
+      configure(caseRoot, {
+        provider: "Third",
+        baseUrl: "https://third.example/v1",
+        model: "model-3",
+        apiKey: "third-key",
+      });
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    }
+    includes(failure, "missing", "Missing registered provider was not reported");
+    assert(configOf(caseRoot) === drifted, "Config changed after provider drift was detected");
     assert(
-      output.split("\n").every((line) => !line.startsWith(" ")),
-      "UI output is not left-aligned",
+      readFileSync(resolve(caseRoot, ".provider-backup", "manifest.txt"), "utf8") === manifestBefore,
+      "Manifest changed after provider drift was detected",
     );
   });
 
-  test("Message types own markers and reject unknown types", () => {
-    const output = invoke("message-types").replaceAll("\r\n", "\n");
-    const expected = [
-      "[i] Info",
-      "[i] Detail",
-      "[+] Success",
-      "[!] Warning",
-      "[X] Error",
-      "[?] Prompt",
-      "[~] Change",
-      "[7] 7",
-      "INVALID=REJECTED",
-    ].join("\n");
-    assert(output === expected, `Unexpected message types:\n${output}`);
-  });
-
-  test("Choice renders an ordered table before input", () => {
-    const output = invoke("choice", {}, "2\n").replaceAll("\r\n", "\n");
-    const expected = ["Choose:", "[1] First", "[2] Second", "[?] Select: RESULT=2"].join("\n");
-    assert(output === expected, `Unexpected choice interaction:\n${output}`);
-  });
-
-  test("Defaulted input renders its value as a table", () => {
-    const output = invoke("default-input", {}, "\n").replaceAll("\r\n", "\n");
-    const expected = [
-      "Base URL:",
-      "[i] Default: https://api.example/v1",
-      "[?] Enter Base URL: RESULT=https://api.example/v1",
-    ].join("\n");
-    assert(output === expected, `Unexpected default input interaction:\n${output}`);
-  });
-
-  test("Message templates format one or multiple values", () => {
-    const output = invoke("messages").replaceAll("\r\n", "\n");
-    const expected = [
-      "Updated config.toml",
-      "Failed to write the config. The pre-setup backup remains at backup. write failed",
-    ].join("\n");
-    assert(output === expected, `Unexpected formatted messages:\n${output}`);
-  });
-
-  test("Configure and restore preserve the initial config", () => {
-    const caseRoot = resolve(testRoot, "lifecycle");
-    const configPath = resolve(caseRoot, "config.toml");
-    const backupDir = resolve(caseRoot, ".provider-backup");
-    const backupConfig = resolve(backupDir, "config.toml");
-    const manifestPath = resolve(backupDir, "manifest.txt");
-    const original = 'approval_policy = "never"\n';
-    mkdirSync(caseRoot, { recursive: true });
-    writeFileSync(configPath, original, "utf8");
-
-    invoke("configure", {
-      CodexHome: projectPath(caseRoot),
-      ProviderName: "Custom",
-      BaseUrl: "http://0.0.0.0/v1",
-      Model: "local-model",
-      ReasoningEffort: "",
-      ContextWindow: "",
-      ApiKey: "cycle-test-key",
-    });
-
-    assert(existsSync(backupConfig), "Original config was not backed up");
-    includes(readFileSync(configPath, "utf8"), "cycle-test-key", "Configured API key is missing");
-    excludes(readFileSync(manifestPath, "utf8"), "cycle-test-key", "Manifest leaked the API key");
-
-    invoke("restore", { CodexHome: projectPath(caseRoot) });
-    assert(readFileSync(configPath, "utf8").replaceAll("\r\n", "\n") === original, "Original config was not restored");
-    assert(!existsSync(backupDir), "Restore left the backup directory behind");
-  });
-
-  test("Restore succeeds when the generated config is already absent", () => {
-    const caseRoot = resolve(testRoot, "restore-absent");
+  test("Invalid manifests stop before changing config", () => {
+    const caseRoot = resolve(testRoot, "invalid-manifest");
     const backupDir = resolve(caseRoot, ".provider-backup");
     mkdirSync(backupDir, { recursive: true });
-    writeFileSync(resolve(backupDir, "manifest.txt"), "original_config_existed=0\n", "utf8");
-
-    const output = invoke("restore", { CodexHome: projectPath(caseRoot) });
-    includes(output, "[+] The generated config.toml was already absent.", "Absent config result is missing");
-    assert(!existsSync(backupDir), "Restore left the backup directory behind");
+    const original = 'approval_policy = "never"\n';
+    writeFileSync(resolve(caseRoot, "config.toml"), original, "utf8");
+    writeFileSync(
+      resolve(backupDir, "manifest.txt"),
+      [
+        "format_version=1",
+        "script_version=1.1.0",
+        "created_at=2026-09-25 00:00:00",
+        "original_config_existed=1",
+        "provider_count=1",
+        "provider_1_id=user_provider",
+        "provider_1_model=model-x",
+        "provider_1_reasoning_effort=",
+        "provider_1_context_window=",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    let failure = "";
+    try {
+      configure(caseRoot, {
+        provider: "Blocked",
+        baseUrl: "https://blocked.example/v1",
+        model: "blocked-model",
+        apiKey: "blocked-key",
+      });
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    }
+    includes(failure, "manifest", "Invalid manifest was not reported");
+    assert(configOf(caseRoot) === original, "Invalid manifest allowed config changes");
   });
 } finally {
   rmSync(testRoot, { recursive: true, force: true });

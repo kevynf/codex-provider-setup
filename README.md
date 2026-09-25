@@ -17,7 +17,14 @@ irm https://kevynf.github.io/codex-provider-setup/setup.ps1 | iex
 curl -fsSL https://kevynf.github.io/codex-provider-setup/setup.sh | sh
 ```
 
-Both scripts preserve unrelated settings and keep a restorable backup in `$CODEX_HOME/.provider-backup` (or `~/.codex/.provider-backup` when `CODEX_HOME` is unset). API keys remain in plain text in `config.toml` and are never added to the backup manifest.
+## Provider management
+
+- **Add** creates and selects a preset or custom provider.
+- **Switch** selects a provider added earlier.
+- **Remove** deletes a provider that is not currently selected.
+- **Restore** returns `config.toml` to its state before the first setup.
+
+Unrelated settings and existing provider sections are preserved. The original config is backed up to `.provider-backup` under the Codex home directory. API keys remain in plain text in `config.toml`.
 
 ## Architecture
 
@@ -56,15 +63,15 @@ On Windows, also test Windows PowerShell 5.1:
 pnpm test:windows-powershell
 ```
 
-Edit `src/spec.ts` for presets, copy, and type styling. Edit `templates/` for platform behavior. `pnpm fmt:check` enforces formatting and generated files in CI.
+Edit `src/spec.ts` for shared data and `templates/` for platform behavior. Generated scripts in `dist/` must not be edited directly.
 
 ## Release
 
 Create and push a version tag matching `v*`:
 
 ```sh
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 The release workflow publishes versioned scripts with checksums and build provenance. Every push to `main` updates the short GitHub Pages URLs above.

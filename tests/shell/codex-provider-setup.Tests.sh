@@ -52,8 +52,44 @@ test_no_optional_text_processors() {
   fi
 }
 
+test_menu_items_are_fixed() {
+  keys=$(setup_menu_items | while IFS="$(printf '\t')" read -r key label; do
+    [ -n "$label" ] || exit 1
+    printf '%s,' "$key"
+  done)
+  [ "$keys" = '1,2,3,4,9,' ]
+}
+
+test_provider_info_ignores_other_sections() {
+  config="$test_root/managed.toml"
+  {
+    printf 'model = "gpt-6-sol"\n'
+    printf '\n'
+    printf '[model_providers.keep]\n'
+    printf 'name = "Keep"\n'
+    printf '\n'
+    printf '[model_providers.codex_provider_setup_1]\n'
+    printf 'name = "Current"\n'
+    printf 'base_url = "https://current.example/v1"\n'
+    printf '\n'
+    printf '[model_providers.codex_provider_setup_1.headers]\n'
+    printf 'X-Custom = "1"\n'
+  } > "$config"
+  CONFIG_PATH=$config
+  get_provider_info codex_provider_setup_1
+  [ "$PROVIDER_PRESENT" -eq 1 ] || return 1
+  [ "$PROVIDER_RECOGNIZABLE" -eq 0 ] || return 1
+  [ "$PROVIDER_NAME" = 'Current' ] || return 1
+  [ "$PROVIDER_BASE_URL" = 'https://current.example/v1' ] || return 1
+  printf 'model = "gpt-6-sol"\n' > "$config"
+  get_provider_info codex_provider_setup_1
+  [ "$PROVIDER_PRESENT" -eq 0 ] || return 1
+}
+
 run_test 'Shell syntax is valid' test_shell_syntax
 run_test 'Runtime does not depend on awk or sed' test_no_optional_text_processors
+run_test 'Menu exposes the fixed provider operations' test_menu_items_are_fixed
+run_test 'Provider read-back ignores unrelated sections' test_provider_info_ignores_other_sections
 
 printf '\nShell-specific checks: %s passed; %s failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]

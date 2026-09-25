@@ -3,13 +3,13 @@ param(
     [Parameter(Mandatory = $true)] [string] $ScriptPath,
     [string] $InputPath = '',
     [string] $OutputPath = '',
-    [string] $ReportPath = '',
     [string] $ProviderName = '',
     [string] $BaseUrl = '',
     [string] $Model = '',
     [string] $ReasoningEffort = '',
     [string] $ContextWindow = '',
     [string] $ApiKey = '',
+    [string] $ProviderId = 'codex_provider_setup_1',
     [string] $Value = '',
     [string] $CodexHome = ''
 )
@@ -32,26 +32,10 @@ switch ($Action) {
             $null
         }
         $selection = New-SetupSelection $ProviderName $BaseUrl $Model $ReasoningEffort $context
-        $report = New-Object 'System.Collections.Generic.List[string]'
-        $content = New-ConfigContent $lines $selection $ApiKey $report
-        Assert-GeneratedConfig $content
+        $content = New-SelectedConfigContent $lines $selection $ProviderId
+        $content = Add-ProviderSection $content $ProviderId $selection $ApiKey
+        Assert-GeneratedConfig $content $ProviderId
         [IO.File]::WriteAllText( $OutputPath, $content, (New-Object System.Text.UTF8Encoding($false)) )
-    }
-    'contains-managed-provider' {
-        $lines = if ((Get-Item -LiteralPath $InputPath).Length -eq 0) {
-            @()
-        } else {
-            @(Get-Content -LiteralPath $InputPath -Encoding UTF8)
-        }
-        [Console]::Out.Write(
-            $(
-                if (Test-ConfigContainsManagedProvider $lines) {
-                    'true'
-                } else {
-                    'false'
-                }
-            )
-        )
     }
     'resolve-base-url' {
         $resolved = Resolve-BaseUrl $Value 6>$null
@@ -125,6 +109,13 @@ switch ($Action) {
             return $ApiKey
         }
 
+        function Read-Choice {
+            if ($env:CODEX_PROVIDER_SETUP_TEST_CONFIRM) {
+                return $env:CODEX_PROVIDER_SETUP_TEST_CONFIRM
+            }
+            return '1'
+        }
+
         $context = if ($ContextWindow) {
             [Nullable[int]] [int] $ContextWindow
         } else {
@@ -132,6 +123,46 @@ switch ($Action) {
         }
         $selection = New-SetupSelection $ProviderName $BaseUrl $Model $ReasoningEffort $context
         Invoke-Configure $selection
+    }
+    'switch-provider' {
+        $script:CodexHomeDir = $CodexHome
+        $script:ConfigPath = Join-Path $CodexHome 'config.toml'
+        $script:BackupDir = Join-Path $CodexHome $BACKUP_DIRNAME
+        $script:BackupConfig = Join-Path $script:BackupDir 'config.toml'
+        $script:ManifestPath = Join-Path $script:BackupDir 'manifest.txt'
+
+        function Read-Choice {
+            if ($env:CODEX_PROVIDER_SETUP_TEST_CONFIRM) {
+                return $env:CODEX_PROVIDER_SETUP_TEST_CONFIRM
+            }
+            return '1'
+        }
+
+        Invoke-SwitchProvider
+    }
+    'remove-provider' {
+        $script:CodexHomeDir = $CodexHome
+        $script:ConfigPath = Join-Path $CodexHome 'config.toml'
+        $script:BackupDir = Join-Path $CodexHome $BACKUP_DIRNAME
+        $script:BackupConfig = Join-Path $script:BackupDir 'config.toml'
+        $script:ManifestPath = Join-Path $script:BackupDir 'manifest.txt'
+        $script:RemoveChoiceRead = $false
+
+        function Read-Choice {
+            if ($script:RemoveChoiceRead) {
+                return '1'
+            }
+            $script:RemoveChoiceRead = $true
+            return $(
+                if ($env:CODEX_PROVIDER_SETUP_TEST_CONFIRM) {
+                    $env:CODEX_PROVIDER_SETUP_TEST_CONFIRM
+                } else {
+                    '1'
+                }
+            )
+        }
+
+        Invoke-RemoveProvider
     }
     'restore' {
         $script:CodexHomeDir = $CodexHome
@@ -145,6 +176,15 @@ switch ($Action) {
         }
 
         Invoke-Restore
+    }
+    'menu-items' {
+        $actions = Get-SetupActions
+        $lines = @(
+            $actions | ForEach-Object {
+                "$($_.Key)`t$($_.Label)"
+            }
+        )
+        [Console]::Out.Write(($lines -join "`n"))
     }
     default {
         throw "Unknown adapter action: $Action"

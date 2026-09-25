@@ -168,13 +168,77 @@ try {
     }
 
     Invoke-Test 'Setup actions have unique keys and bound behavior' {
-        Assert-Equal $SETUP_ACTIONS.Count @(
-            $SETUP_ACTIONS.Key | Select-Object -Unique
-        ).Count 'Setup action keys are duplicated'
-        foreach ($action in $SETUP_ACTIONS) {
+        $actions = Get-SetupActions
+        Assert-Equal $actions.Count @($actions.Key | Select-Object -Unique).Count 'Setup action keys are duplicated'
+        foreach ($action in $actions) {
             Assert-True ([bool] $action.Label) "Setup action $($action.Key) has no label"
             Assert-True ($action.Action -is [scriptblock]) "Setup action $($action.Key) has no behavior"
         }
+        Assert-Equal '1,2,3,4,9'(@($actions.Key) -join ',') 'Setup action keys differ'
+    }
+
+    Invoke-Test 'Provider read-back ignores unrelated providers' {
+        $caseRoot = Join-Path $testRoot 'managed-provider'
+        New-Item -ItemType Directory -Path $caseRoot -Force | Out-Null
+        $utf8 = New-Object System.Text.UTF8Encoding($false)
+        $script:ConfigPath = Join-Path $caseRoot 'config.toml'
+        [IO.File]::WriteAllText(
+            $script:ConfigPath,
+            @(
+                'model = "gpt-6-sol"',
+                '',
+                '[model_providers.keep]',
+                'name = "Keep"',
+                '',
+                '[model_providers.codex_provider_setup_1]',
+                'name = "Current"',
+                'base_url = "https://current.example/v1"',
+                '',
+                '[model_providers.codex_provider_setup_1.headers]',
+                'X-Custom = "1"'
+            ) -join "`n",
+            $utf8
+        )
+        $managed = Get-ProviderInfo @(
+            Get-Content -LiteralPath $script:ConfigPath -Encoding UTF8
+        ) 'codex_provider_setup_1'
+        Assert-True $managed.Present 'Managed provider was not detected'
+        Assert-True (-not $managed.Recognizable) 'A provider section with subtables must not be removable'
+        Assert-Equal 'Current' $managed.ProviderName 'Managed provider name differs'
+        Assert-Equal 'https://current.example/v1' $managed.BaseUrl 'Managed Base URL differs'
+        [IO.File]::WriteAllText(
+            $script:ConfigPath,
+            @( '[model_providers.codex_provider_setup_1]', 'wire_api = "responses"' ) -join "`n",
+            $utf8
+        )
+        $unnamed = Get-ProviderInfo @(
+            Get-Content -LiteralPath $script:ConfigPath -Encoding UTF8
+        ) 'codex_provider_setup_1'
+        Assert-True $unnamed.Present 'A managed section without a name was not detected'
+        [IO.File]::WriteAllText( $script:ConfigPath, 'model = "gpt-6-sol"', $utf8 )
+        $absent = Get-ProviderInfo @(
+            Get-Content -LiteralPath $script:ConfigPath -Encoding UTF8
+        ) 'codex_provider_setup_1'
+        Assert-True (-not $absent.Present) 'A config without the managed section reported a provider'
+    }
+    Invoke-Test 'Selection rewrite keeps provider sections' {
+        $lines = @(
+            'approval_policy = "never"',
+            'model = "old-model"',
+            '',
+            '[model_providers.keep]',
+            'name = "Keep"',
+            '',
+            '[model_providers.codex_provider_setup]',
+            'name = "Orphan"',
+            '',
+            '[model_providers.codex_provider_setup.headers]',
+            'X-Token = "secret"'
+        )
+        $selection = New-SetupSelection 'Next' 'https://next.example/v1' 'next-model' '' $null
+        $content = New-SelectedConfigContent $lines $selection 'codex_provider_setup_2'
+        Assert-True ($content -match '\[model_providers\.codex_provider_setup\]') 'Existing provider was removed'
+        Assert-True ($content -match 'model_provider = "codex_provider_setup_2"') 'Selection was not rewritten'
     }
 
     Invoke-Test 'Codex strict config accepts OpenAI and custom output' {
@@ -195,8 +259,8 @@ try {
         $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
         $openAI = New-SetupSelection 'OpenAI' 'https://api.openai.com/v1' 'gpt-6-sol' 'medium'([Nullable[int]] 272000)
-        $report = New-Object 'System.Collections.Generic.List[string]'
-        $content = New-ConfigContent @() $openAI 'test-key' $report
+        $content = New-SelectedConfigContent @() $openAI 'codex_provider_setup_1'
+        $content = Add-ProviderSection $content 'codex_provider_setup_1' $openAI 'test-key'
         [System.IO.File]::WriteAllText( $script:ConfigPath, $content, $utf8NoBom )
         $previousErrorActionPreference = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
@@ -205,10 +269,10 @@ try {
             Assert-Equal 0 $LASTEXITCODE "Codex rejected OpenAI config: $openAIOutput"
 
             $custom = New-SetupSelection 'Local provider'(Resolve-BaseUrl '0.0.0.0/v1') 'local-model' '' $null
-            $report = New-Object 'System.Collections.Generic.List[string]'
-            $content = New-ConfigContent @(
+            $content = New-SelectedConfigContent @(
                 Get-Content -LiteralPath $script:ConfigPath -Encoding UTF8
-            ) $custom 'test-key' $report
+            ) $custom 'codex_provider_setup_2'
+            $content = Add-ProviderSection $content 'codex_provider_setup_2' $custom 'test-key'
             [System.IO.File]::WriteAllText( $script:ConfigPath, $content, $utf8NoBom )
             $customOutput = ('' | & $codexCommand.Source app-server --strict-config --stdio 2>&1| Out-String)
             Assert-Equal 0 $LASTEXITCODE "Codex rejected custom config: $customOutput"
