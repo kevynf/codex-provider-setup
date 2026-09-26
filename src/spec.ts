@@ -12,6 +12,7 @@ export interface TypeStyle {
 
 export interface SetupSpec {
   readonly version: string;
+  readonly defaultProviderName: string;
   readonly modelPresets: readonly ModelPreset[];
   readonly messages: Readonly<Record<string, string>>;
   readonly typeStyles: Readonly<Record<string, TypeStyle>>;
@@ -19,6 +20,7 @@ export interface SetupSpec {
 
 export const setupSpec = {
   version: "1.1.0",
+  defaultProviderName: "OpenAI",
   modelPresets: [
     { model: "gpt-6-sol", reasoningEffort: "medium", contextWindow: 272000 },
     { model: "gpt-6-astra", reasoningEffort: "low", contextWindow: 272000 },
@@ -61,6 +63,8 @@ export const setupSpec = {
     BaseUrlInvalid: "Invalid Base URL: {0}",
     BaseUrlScheme: "Only http and https Base URLs are supported.",
     BaseUrlCredentials: "The Base URL cannot contain a username or password.",
+    BaseUrlSecurityWarning:
+      "Security: verify that you trust this Base URL. HTTP may send your API key without encryption; use HTTPS unless the connection is trusted.",
     ModelMenuTitle: "Select an OpenAI model",
     DefaultMarker: "default, ",
     ModelPresetFormat: "{0} ({1}reasoning: {2})",
@@ -72,6 +76,8 @@ export const setupSpec = {
     DefaultBaseUrlPrompt: "Enter Base URL or press Enter to use the default",
     ProviderInputMessage: "Specify the provider display name.",
     ProviderPrompt: "Provider display name",
+    ProviderInputTitle: "Provider display name",
+    DefaultProviderNamePrompt: "Enter provider name or press Enter to use the default",
     BaseUrlInputMessage: "Specify the provider Base URL.",
     BaseUrlPrompt: "Base URL",
     DuplicateSetting: "Generated config.toml contains a duplicate top-level key: {0}",
@@ -96,14 +102,13 @@ export const setupSpec = {
     ConfirmModel: "After restarting, confirm that model is {0}.",
     RestoreTitle: "Restore the pre-setup Codex config",
     RestoreWarning: "Restore will overwrite all manual changes made to config.toml after setup.",
-    RestoreChoiceTitle: "Choose a restore action",
+    RestoreConfirmTitle: "Confirm restore",
     RestoreConfirmAction: "Restore configuration",
     CancelAction: "Cancel",
     BackupUnavailable: "No backup is available.",
+    NoRestorableConfig: "No original config.toml backup is available to restore. No files were changed.",
     RestoreCanceled: "Canceled. No files were changed.",
     ConfigRestored: "Restored config.toml.",
-    ConfigDeleted: "Deleted the config.toml created by this script.",
-    ConfigAlreadyAbsent: "The generated config.toml was already absent.",
     BackupRemoved: "Removed the backup directory.",
     RestoreCompleteTitle: "Restore complete",
     CodexHomeMissing: "Codex config directory not found: {0}. Run Codex CLI once or set CODEX_HOME, then try again.",

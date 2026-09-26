@@ -149,6 +149,14 @@ function excludes(content: string, unexpected: string, message: string): void {
   assert(!content.includes(unexpected), `${message}: ${JSON.stringify(unexpected)}`);
 }
 
+function providerIds(content: string): string[] {
+  return [...content.matchAll(/\[model_providers\.(provider_[0-9a-f]{8})\]/g)].map((match) => match[1]!);
+}
+
+function manifestKey(providerId: string, field: string): string {
+  return `provider_${providerId.slice("provider_".length)}_${field}`;
+}
+
 function test(name: string, body: () => void): void {
   try {
     body();
@@ -169,8 +177,8 @@ try {
       apiKey: "test-key",
     });
     includes(output, 'model = "local-model"', "Model is missing");
-    includes(output, 'model_provider = "codex_provider_setup_1"', "Provider selection is missing");
-    includes(output, "[model_providers.codex_provider_setup_1]", "Provider section is missing");
+    assert(providerIds(output).length === 1, "Provider selection is missing");
+    includes(output, `[model_providers.${providerIds(output)[0]}]`, "Provider section is missing");
   });
 
   test("Adding preserves unrelated top-level and provider settings", () => {
@@ -185,7 +193,7 @@ try {
         "[model_providers.keep]",
         'name = "Keep"',
         "",
-        "[model_providers.codex_provider_setup_1.headers]",
+        "[model_providers.provider_11111111.headers]",
         'old-secret = "keep"',
         "",
       ].join("\n"),
@@ -239,6 +247,18 @@ try {
     includes(output, 'experimental_bearer_token = "secret\\"\\\\value"', "API key was not escaped");
   });
 
+  test("A UTF-8 BOM does not hide or duplicate the model key", () => {
+    const output = transform("bom", '\uFEFFmodel = "old-model"\nprofile = "keep"\n', {
+      provider: "Custom",
+      baseUrl: "https://example.test/v1",
+      model: "new-model",
+      apiKey: "test-key",
+    });
+    assert((output.match(/^model\s*=/gm) ?? []).length === 1, "Generated config has duplicate model keys");
+    includes(output, 'model = "new-model"', "Generated model is missing");
+    includes(output, 'profile = "keep"', "Unrelated setting was removed");
+  });
+
   test("Base URLs use local and public defaults", () => {
     const cases = new Map([
       ["0.0.0.0/v1", "http://0.0.0.0/v1"],
@@ -246,9 +266,44 @@ try {
       ["api.example.com/v1", "https://api.example.com/v1"],
     ]);
     for (const [value, expected] of cases) {
-      assert(invoke("resolve-base-url", { Value: value }) === expected, `Unexpected Base URL for ${value}`);
+      const output = invoke("resolve-base-url", { Value: value });
+      includes(output, expected, `Unexpected Base URL for ${value}`);
+      includes(output, "verify that you trust this Base URL", "Base URL security warning is missing");
     }
   });
+
+  test("Restore refuses when there is no original config backup", () => {
+    const caseRoot = resolve(testRoot, "no-original-config");
+    mkdirSync(caseRoot, { recursive: true });
+    configure(caseRoot, {
+      provider: "New setup",
+      baseUrl: "https://example.test/v1",
+      model: "model-x",
+      apiKey: "test-key",
+    });
+    const generated = configOf(caseRoot);
+    const manifest = readFileSync(resolve(caseRoot, ".provider-backup", "manifest.txt"), "utf8");
+    let failure = "";
+    try {
+      restore(caseRoot);
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    }
+    includes(failure, "No original config.toml backup is available", "Restore did not report the missing backup");
+    assert(configOf(caseRoot) === generated, "Restore changed config without an original backup");
+    assert(
+      readFileSync(resolve(caseRoot, ".provider-backup", "manifest.txt"), "utf8") === manifest,
+      "Restore changed the manifest without an original backup",
+    );
+  });
+
+  if (runtime === "shell") {
+    test("Noninteractive shell input does not consume piped script data", () => {
+      const output = invoke("noninteractive-input", {}, "piped script text\n");
+      includes(output, "INPUT=REJECTED", "Shell input fell back to standard input without a TTY");
+      excludes(output, "piped script text", "Piped script text was consumed as user input");
+    });
+  }
 
   test("Messages and tables share one left-aligned layout", () => {
     const output = invoke("ui-layout").replaceAll("\r\n", "\n");
@@ -303,8 +358,10 @@ try {
     const backup = readFileSync(resolve(caseRoot, ".provider-backup", "config.toml"), "utf8").replaceAll("\r\n", "\n");
     assert(backup === original, "Initial backup changed");
     const added = configOf(caseRoot);
-    includes(added, "[model_providers.codex_provider_setup_1]", "First provider is missing");
-    includes(added, "[model_providers.codex_provider_setup_2]", "Second provider is missing");
+    const addedProviderIds = providerIds(added);
+    assert(addedProviderIds.length === 2, "Provider IDs are missing or not hash-based");
+    includes(added, `[model_providers.${addedProviderIds[0]}]`, "First provider is missing");
+    includes(added, `[model_providers.${addedProviderIds[1]}]`, "Second provider is missing");
     includes(added, "first-key", "First key was lost");
     includes(added, "second-key", "Second key was lost");
     includes(added, 'profile = "keep"', "Profile was removed");
@@ -312,7 +369,7 @@ try {
 
     switchProvider(caseRoot, "1");
     const switched = configOf(caseRoot);
-    includes(switched, 'model_provider = "codex_provider_setup_1"', "Provider was not switched");
+    includes(switched, `model_provider = "${addedProviderIds[0]}"`, "Provider was not switched");
     includes(switched, 'model = "model-1"', "Model was not switched");
     excludes(switched, "model_reasoning_effort", "Old reasoning effort was retained");
     excludes(switched, "model_context_window", "Old context window was retained");
@@ -321,11 +378,16 @@ try {
 
     removeProvider(caseRoot, "1");
     const removed = configOf(caseRoot);
-    includes(removed, "[model_providers.codex_provider_setup_1]", "Current provider was removed");
-    excludes(removed, "[model_providers.codex_provider_setup_2]", "Inactive provider was retained");
+    includes(removed, `[model_providers.${addedProviderIds[0]}]`, "Current provider was removed");
+    excludes(removed, `[model_providers.${addedProviderIds[1]}]`, "Inactive provider was retained");
     const manifest = manifestOf(caseRoot);
     assert(manifest.get("provider_count") === "1", "Provider list was not compacted");
-    assert(manifest.get("provider_1_id") === "codex_provider_setup_1", "Wrong provider remained in the list");
+    assert(
+      manifest.get(manifestKey(addedProviderIds[0]!, "model")) === "model-1",
+      "Manifest and config provider IDs differ",
+    );
+    assert(!manifest.has(manifestKey(addedProviderIds[0]!, "name")), "Manifest duplicated provider name");
+    assert(!manifest.has(manifestKey(addedProviderIds[0]!, "base_url")), "Manifest duplicated provider Base URL");
     excludes(
       readFileSync(resolve(caseRoot, ".provider-backup", "manifest.txt"), "utf8"),
       "-key",
@@ -355,7 +417,7 @@ try {
     const caseRoot = resolve(testRoot, "unowned-prefix");
     mkdirSync(caseRoot, { recursive: true });
     const existing = [
-      "[model_providers.codex_provider_setup_1]",
+      "[model_providers.provider_11111111]",
       'name = "User owned"',
       'base_url = "https://user.example/v1"',
       'env_key = "USER_KEY"',
@@ -369,9 +431,13 @@ try {
       apiKey: "managed-key",
     });
     const config = configOf(caseRoot);
-    includes(config, "[model_providers.codex_provider_setup_1]", "User-owned provider was removed");
-    includes(config, "[model_providers.codex_provider_setup_2]", "Managed provider did not avoid the occupied ID");
-    assert(manifestOf(caseRoot).get("provider_1_id") === "codex_provider_setup_2", "Unowned provider was registered");
+    includes(config, "[model_providers.provider_11111111]", "User-owned provider was removed");
+    const managedIds = providerIds(config).filter((id) => id !== "provider_11111111");
+    assert(managedIds.length === 1, "Managed provider did not receive a hash ID");
+    assert(
+      manifestOf(caseRoot).get(manifestKey(managedIds[0]!, "model")) === "managed-model",
+      "Unowned provider was registered",
+    );
   });
 
   test("Adding stops when a registered provider section is missing", () => {
@@ -389,9 +455,10 @@ try {
       model: "model-2",
       apiKey: "second-key",
     });
+    const firstId = providerIds(configOf(caseRoot))[0];
     const firstSection = [
       "",
-      "[model_providers.codex_provider_setup_1]",
+      `[model_providers.${firstId}]`,
       'name = "First"',
       'base_url = "https://first.example/v1"',
       'wire_api = "responses"',
@@ -433,10 +500,9 @@ try {
         "created_at=2026-09-25 00:00:00",
         "original_config_existed=1",
         "provider_count=1",
-        "provider_1_id=user_provider",
-        "provider_1_model=model-x",
-        "provider_1_reasoning_effort=",
-        "provider_1_context_window=",
+        "provider_user_provider_model=model-x",
+        "provider_user_provider_reasoning_effort=",
+        "provider_user_provider_context_window=",
         "",
       ].join("\n"),
       "utf8",

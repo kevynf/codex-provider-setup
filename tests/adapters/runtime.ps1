@@ -9,7 +9,7 @@ param(
     [string] $ReasoningEffort = '',
     [string] $ContextWindow = '',
     [string] $ApiKey = '',
-    [string] $ProviderId = 'codex_provider_setup_1',
+    [string] $ProviderId = 'provider_11111111',
     [string] $Value = '',
     [string] $CodexHome = ''
 )
@@ -38,7 +38,7 @@ switch ($Action) {
         [IO.File]::WriteAllText( $OutputPath, $content, (New-Object System.Text.UTF8Encoding($false)) )
     }
     'resolve-base-url' {
-        $resolved = Resolve-BaseUrl $Value 6>$null
+        $resolved = Resolve-BaseUrl $Value
         [Console]::Out.Write($resolved)
     }
     'ui-layout' {

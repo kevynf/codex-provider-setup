@@ -32,7 +32,7 @@ case $action in
     SELECTED_REASONING_EFFORT=$6
     SELECTED_CONTEXT_WINDOW=$7
     API_KEY=$8
-    SELECTED_PROVIDER_ID=codex_provider_setup_1
+    SELECTED_PROVIDER_ID=provider_11111111
     escaped_model=$(toml_escape "$SELECTED_MODEL")
     transform_config \
       "$input_path" \
@@ -44,8 +44,16 @@ case $action in
     write_managed_provider "$output_path"
     ;;
   resolve-base-url)
-    resolve_base_url "$1" > /dev/null
+    resolve_base_url "$1"
     printf '%s' "$RESOLVED_BASE_URL"
+    ;;
+  noninteractive-input)
+    unset CODEX_PROVIDER_SETUP_TEST_INPUT
+    if read_input 'Probe input'; then
+      printf 'INPUT=ACCEPTED:%s' "$INPUT_VALUE"
+      exit 1
+    fi
+    printf 'INPUT=REJECTED'
     ;;
   ui-layout)
     HAS_INTERACTION_UI=0

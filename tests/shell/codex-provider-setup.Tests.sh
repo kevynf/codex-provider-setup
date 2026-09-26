@@ -68,21 +68,21 @@ test_provider_info_ignores_other_sections() {
     printf '[model_providers.keep]\n'
     printf 'name = "Keep"\n'
     printf '\n'
-    printf '[model_providers.codex_provider_setup_1]\n'
+    printf '[model_providers.provider_11111111]\n'
     printf 'name = "Current"\n'
     printf 'base_url = "https://current.example/v1"\n'
     printf '\n'
-    printf '[model_providers.codex_provider_setup_1.headers]\n'
+    printf '[model_providers.provider_11111111.headers]\n'
     printf 'X-Custom = "1"\n'
   } > "$config"
   CONFIG_PATH=$config
-  get_provider_info codex_provider_setup_1
+  get_provider_info provider_11111111
   [ "$PROVIDER_PRESENT" -eq 1 ] || return 1
   [ "$PROVIDER_RECOGNIZABLE" -eq 0 ] || return 1
   [ "$PROVIDER_NAME" = 'Current' ] || return 1
   [ "$PROVIDER_BASE_URL" = 'https://current.example/v1' ] || return 1
   printf 'model = "gpt-6-sol"\n' > "$config"
-  get_provider_info codex_provider_setup_1
+  get_provider_info provider_11111111
   [ "$PROVIDER_PRESENT" -eq 0 ] || return 1
 }
 

@@ -7,7 +7,8 @@
 
 # {{GENERATED_HEADER}}
 # {{SCRIPT_VERSION}}
-PROVIDER_PREFIX='codex_provider_setup_'
+# {{DEFAULT_PROVIDER_NAME}}
+PROVIDER_PREFIX='provider_'
 BACKUP_DIRNAME='.provider-backup'
 
 # {{MODEL_PRESETS}}
@@ -98,16 +99,20 @@ read_input() {
   if [ "${CODEX_PROVIDER_SETUP_TEST_INPUT:-0}" -eq 1 ]; then
     IFS= read -r INPUT_VALUE || return 1
   elif [ -r /dev/tty ]; then
-    if [ "$secure" -eq 1 ]; then stty -echo < /dev/tty; fi
+    if [ "$secure" -eq 1 ]; then
+      trap 'stty echo < /dev/tty 2>/dev/null || :' EXIT HUP INT TERM
+      stty -echo < /dev/tty
+    fi
     IFS= read -r INPUT_VALUE < /dev/tty
     status=$?
     if [ "$secure" -eq 1 ]; then
       stty echo < /dev/tty
+      trap - EXIT HUP INT TERM
       printf '\n'
     fi
     [ "$status" -eq 0 ] || return "$status"
   else
-    IFS= read -r INPUT_VALUE || return 1
+    return 1
   fi
 }
 
@@ -245,6 +250,7 @@ resolve_base_url() {
   case "$authority" in
     *@*) stop_setup "$(message BaseUrlCredentials)" ;;
   esac
+  write_feedback_message "$(message BaseUrlSecurityWarning)" Warning
   RESOLVED_BASE_URL=$candidate
 }
 
@@ -266,6 +272,7 @@ select_model_preset() {
     SELECTED_MODEL=$REQUIRED_VALUE
     SELECTED_REASONING_EFFORT=''
     SELECTED_CONTEXT_WINDOW=''
+    PRESET_DEFAULT_NAME=''
   else
     load_model_preset "$CHOICE_VALUE"
     SELECTED_MODEL=$PRESET_MODEL
@@ -276,9 +283,10 @@ select_model_preset() {
 
 get_preset_selection() {
   select_model_preset
+  read_value_with_default "$(message ProviderInputTitle)" "$(message DefaultProviderNamePrompt)" "$PRESET_DEFAULT_NAME"
+  SELECTED_PROVIDER=$DEFAULTED_VALUE
   read_value_with_default "$(message BaseUrlInputTitle)" "$(message DefaultBaseUrlPrompt)" 'https://api.openai.com/v1'
   resolve_base_url "$DEFAULTED_VALUE"
-  SELECTED_PROVIDER='OpenAI'
   SELECTED_BASE_URL=$RESOLVED_BASE_URL
 }
 
@@ -311,6 +319,8 @@ toml_escape() {
 
 toml_trim() {
   TOML_TRIMMED=$1
+  TOML_BOM=$(printf '\357\273\277')
+  TOML_TRIMMED=${TOML_TRIMMED#"$TOML_BOM"}
   TOML_TRIMMED=${TOML_TRIMMED#"${TOML_TRIMMED%%[![:space:]]*}"}
   TOML_TRIMMED=${TOML_TRIMMED%"${TOML_TRIMMED##*[![:space:]]}"}
 }
@@ -609,6 +619,20 @@ manifest_field() {
   done < "$MANIFEST_PATH"
 }
 
+collect_manifest_provider_ids() {
+  MANIFEST_PROVIDER_IDS=''
+  while IFS= read -r manifest_line || [ -n "$manifest_line" ]; do
+    case $manifest_line in
+      provider_????????_model=*)
+        manifest_id=${manifest_line#provider_}
+        manifest_id=${manifest_id%_model=*}
+        if [ -n "$MANIFEST_PROVIDER_IDS" ]; then MANIFEST_PROVIDER_IDS=$MANIFEST_PROVIDER_IDS,; fi
+        MANIFEST_PROVIDER_IDS=${MANIFEST_PROVIDER_IDS}provider_$manifest_id
+        ;;
+    esac
+  done < "$MANIFEST_PATH"
+}
+
 get_top_level_setting() {
   TOP_LEVEL_VALUE=''
   [ -f "$CONFIG_PATH" ] || return
@@ -678,37 +702,24 @@ get_provider_info() {
   done < "$CONFIG_PATH"
 }
 
-get_next_provider_id() {
-  used_provider_ids='|'
-  if [ -f "$CONFIG_PATH" ]; then
-    toml_reset_scan
-    while IFS= read -r id_line || [ -n "$id_line" ]; do
-      if [ -z "$TOML_MULTILINE" ] && [ "$TOML_DEPTH" -eq 0 ]; then
-        toml_parse_header "$id_line" || true
-        if [ "$TOML_HEADER_COUNT" -ge 2 ] && [ "$TOML_HEADER_1" = model_providers ]; then
-          used_provider_ids=$used_provider_ids$TOML_HEADER_2'|'
-        fi
-      fi
-      toml_scan_line "$id_line"
-    done < "$CONFIG_PATH"
+get_provider_id() {
+  provider_identity=$1
+  provider_hash=''
+  if command -v sha256sum > /dev/null 2>&1; then
+    provider_hash=$(printf '%s' "$provider_identity" | sha256sum)
+    provider_hash=${provider_hash%% *}
+  elif command -v shasum > /dev/null 2>&1; then
+    provider_hash=$(printf '%s' "$provider_identity" | shasum -a 256)
+    provider_hash=${provider_hash%% *}
+  elif command -v openssl > /dev/null 2>&1; then
+    provider_hash=$(printf '%s' "$provider_identity" | openssl dgst -sha256)
+    provider_hash=${provider_hash##*= }
+  else
+    stop_setup 'Unable to calculate a provider ID: install sha256sum, shasum, or openssl.'
   fi
-  record_number=1
-  while [ "$record_number" -le "$PROVIDER_COUNT" ]; do
-    load_provider_record "$record_number"
-    used_provider_ids=$used_provider_ids$RECORD_ID'|'
-    record_number=$((record_number + 1))
-  done
-  provider_number=1
-  while :; do
-    candidate=$PROVIDER_PREFIX$provider_number
-    case $used_provider_ids in
-      *"|$candidate|"*) provider_number=$((provider_number + 1)) ;;
-      *)
-        NEXT_PROVIDER_ID=$candidate
-        return
-        ;;
-    esac
-  done
+  provider_hash=$(printf '%s' "$provider_hash" | tr 'A-F' 'a-f' | cut -c 1-8)
+  [ "${#provider_hash}" -eq 8 ] || stop_setup 'Unable to calculate a provider ID.'
+  PROVIDER_ID=$PROVIDER_PREFIX$provider_hash
 }
 
 initialize_backup() {
@@ -742,37 +753,59 @@ assert_manifest() {
     '' | *[!0-9]*) stop_setup "$(message BackupManifestInvalid)" ;;
   esac
   PROVIDER_COUNT=$MANIFEST_FIELD_VALUE
+  collect_manifest_provider_ids
+  [ -n "$MANIFEST_PROVIDER_IDS" ] || [ "$PROVIDER_COUNT" -eq 0 ] || stop_setup "$(message BackupManifestInvalid)"
   validated_ids='|'
   validated_number=1
   while [ "$validated_number" -le "$PROVIDER_COUNT" ]; do
-    manifest_field "provider_${validated_number}_id"
-    validated_id=$MANIFEST_FIELD_VALUE
+    manifest_provider_id_at "$validated_number" || stop_setup "$(message BackupManifestInvalid)"
+    validated_id=$MANIFEST_PROVIDER_ID
     case $validated_id in
-      codex_provider_setup_[1-9]*) ;;
+      provider_????????) ;;
       *) stop_setup "$(message BackupManifestInvalid)" ;;
     esac
-    case ${validated_id#codex_provider_setup_} in
-      *[!0-9]*) stop_setup "$(message BackupManifestInvalid)" ;;
+    case ${validated_id#provider_} in
+      *[!0-9a-f]*) stop_setup "$(message BackupManifestInvalid)" ;;
     esac
     case $validated_ids in
       *"|$validated_id|"*) stop_setup "$(message BackupManifestInvalid)" ;;
     esac
     validated_ids=$validated_ids$validated_id'|'
-    manifest_field "provider_${validated_number}_model"
+    validated_key=${validated_id#provider_}
+    manifest_field "provider_${validated_key}_model"
     [ -n "$MANIFEST_FIELD_VALUE" ] || stop_setup "$(message BackupManifestInvalid)"
     validated_number=$((validated_number + 1))
   done
 }
 
+manifest_provider_id_at() {
+  manifest_provider_id_index=$1
+  manifest_provider_id_number=1
+  MANIFEST_PROVIDER_ID=''
+  old_ifs=$IFS
+  IFS=,
+  for manifest_provider_id in $MANIFEST_PROVIDER_IDS; do
+    if [ "$manifest_provider_id_number" -eq "$manifest_provider_id_index" ]; then
+      MANIFEST_PROVIDER_ID=$manifest_provider_id
+      IFS=$old_ifs
+      return 0
+    fi
+    manifest_provider_id_number=$((manifest_provider_id_number + 1))
+  done
+  IFS=$old_ifs
+  return 1
+}
+
 load_provider_record() {
   record_number=$1
-  manifest_field "provider_${record_number}_id"
-  RECORD_ID=$MANIFEST_FIELD_VALUE
-  manifest_field "provider_${record_number}_model"
+  manifest_provider_id_at "$record_number" || stop_setup "$(message BackupManifestInvalid)"
+  RECORD_ID=$MANIFEST_PROVIDER_ID
+  RECORD_KEY=${RECORD_ID#provider_}
+  manifest_field "provider_${RECORD_KEY}_model"
   RECORD_MODEL=$MANIFEST_FIELD_VALUE
-  manifest_field "provider_${record_number}_reasoning_effort"
+  manifest_field "provider_${RECORD_KEY}_reasoning_effort"
   RECORD_REASONING=$MANIFEST_FIELD_VALUE
-  manifest_field "provider_${record_number}_context_window"
+  manifest_field "provider_${RECORD_KEY}_context_window"
   RECORD_CONTEXT=$MANIFEST_FIELD_VALUE
   if [ -z "$RECORD_ID" ] || [ -z "$RECORD_MODEL" ]; then
     stop_setup "$(message BackupManifestInvalid)"
@@ -801,24 +834,40 @@ write_manifest() {
     printf 'created_at=%s\n' "$manifest_created_at"
     printf 'original_config_existed=%s\n' "$ORIGINAL_CONFIG_EXISTED"
     printf 'provider_count=%s\n' "$final_count"
-    output_number=1
+    manifest_ids=''
     record_number=1
     while [ "$record_number" -le "$PROVIDER_COUNT" ]; do
       load_provider_record "$record_number"
       if [ "$RECORD_ID" != "$manifest_skip_id" ]; then
-        printf 'provider_%s_id=%s\n' "$output_number" "$RECORD_ID"
-        printf 'provider_%s_model=%s\n' "$output_number" "$RECORD_MODEL"
-        printf 'provider_%s_reasoning_effort=%s\n' "$output_number" "$RECORD_REASONING"
-        printf 'provider_%s_context_window=%s\n' "$output_number" "$RECORD_CONTEXT"
-        output_number=$((output_number + 1))
+        if [ -n "$manifest_ids" ]; then manifest_ids=$manifest_ids,; fi
+        manifest_ids=$manifest_ids$RECORD_ID
       fi
       record_number=$((record_number + 1))
     done
     if [ "$manifest_append" -eq 1 ]; then
-      printf 'provider_%s_id=%s\n' "$output_number" "$SELECTED_PROVIDER_ID"
-      printf 'provider_%s_model=%s\n' "$output_number" "$SELECTED_MODEL"
-      printf 'provider_%s_reasoning_effort=%s\n' "$output_number" "$SELECTED_REASONING_EFFORT"
-      printf 'provider_%s_context_window=%s\n' "$output_number" "$SELECTED_CONTEXT_WINDOW"
+      if [ -n "$manifest_ids" ]; then manifest_ids=$manifest_ids,; fi
+      manifest_ids=$manifest_ids$SELECTED_PROVIDER_ID
+    fi
+    record_number=1
+    while [ "$record_number" -le "$PROVIDER_COUNT" ]; do
+      load_provider_record "$record_number"
+      if [ "$RECORD_ID" != "$manifest_skip_id" ]; then
+        get_provider_info "$RECORD_ID"
+        manifest_key=${RECORD_ID#provider_}
+        if [ "$record_number" -gt 1 ] || [ "$manifest_append" -eq 1 ] && [ -n "$manifest_ids" ]; then
+          printf '\n'
+        fi
+        printf 'provider_%s_model=%s\n' "$manifest_key" "$RECORD_MODEL"
+        printf 'provider_%s_reasoning_effort=%s\n' "$manifest_key" "$RECORD_REASONING"
+        printf 'provider_%s_context_window=%s\n' "$manifest_key" "$RECORD_CONTEXT"
+      fi
+      record_number=$((record_number + 1))
+    done
+    if [ "$manifest_append" -eq 1 ]; then
+      manifest_key=${SELECTED_PROVIDER_ID#provider_}
+      printf 'provider_%s_model=%s\n' "$manifest_key" "$SELECTED_MODEL"
+      printf 'provider_%s_reasoning_effort=%s\n' "$manifest_key" "$SELECTED_REASONING_EFFORT"
+      printf 'provider_%s_context_window=%s\n' "$manifest_key" "$SELECTED_CONTEXT_WINDOW"
     fi
   } > "$manifest_output"
 }
@@ -914,6 +963,58 @@ transform_write_top_settings() {
   TRANSFORM_TOP_WRITTEN=1
 }
 
+assert_generated_config() {
+  assert_input=$1
+  assert_provider_id=$2
+  TARGET_PROVIDER_ID=$assert_provider_id
+  assert_seen='|'
+  assert_provider_count=0
+  assert_in_leading=1
+  toml_reset_scan
+  while IFS= read -r assert_line || [ -n "$assert_line" ]; do
+    toml_trim "$assert_line"
+    if [ -z "$TOML_MULTILINE" ] && [ "$TOML_DEPTH" -eq 0 ]; then
+      case $TOML_TRIMMED in
+        \[*)
+          assert_in_leading=0
+          if toml_is_provider_section "$assert_line"; then assert_provider_count=$((assert_provider_count + 1)); fi
+          ;;
+      esac
+      if [ "$assert_in_leading" -eq 1 ]; then
+        toml_get_top_key "$assert_line"
+        if [ -n "$TOML_TOP_KEY" ]; then
+          case $assert_seen in
+            *"|$TOML_TOP_KEY|"*)
+              GENERATED_CONFIG_ERROR=$(message DuplicateSetting "$TOML_TOP_KEY")
+              return 1
+              ;;
+            *) assert_seen=$assert_seen$TOML_TOP_KEY'|' ;;
+          esac
+        fi
+      fi
+    fi
+    toml_scan_line "$assert_line"
+  done < "$assert_input"
+  case $assert_seen in
+    *'|model|'*) ;;
+    *)
+      GENERATED_CONFIG_ERROR=$(message MissingSetting model)
+      return 1
+      ;;
+  esac
+  case $assert_seen in
+    *'|model_provider|'*) ;;
+    *)
+      GENERATED_CONFIG_ERROR=$(message MissingSetting model_provider)
+      return 1
+      ;;
+  esac
+  if [ "$assert_provider_count" -ne 1 ]; then
+    GENERATED_CONFIG_ERROR=$(message ProviderSectionCount "$assert_provider_id")
+    return 1
+  fi
+}
+
 write_managed_provider() {
   output_path=$1
   provider_name=$(toml_escape "$SELECTED_PROVIDER")
@@ -994,8 +1095,11 @@ invoke_configure() {
     [ "$PROVIDER_PRESENT" -eq 1 ] || stop_setup "$(message ManagedProviderMissing "$RECORD_ID")"
     record_number=$((record_number + 1))
   done
-  get_next_provider_id
-  SELECTED_PROVIDER_ID=$NEXT_PROVIDER_ID
+  provider_identity=$(printf '%s\n%s\n%s\n%s\n%s' \
+    "$SELECTED_PROVIDER" "$SELECTED_BASE_URL" "$SELECTED_MODEL" \
+    "$SELECTED_REASONING_EFFORT" "$SELECTED_CONTEXT_WINDOW")
+  get_provider_id "$provider_identity"
+  SELECTED_PROVIDER_ID=$PROVIDER_ID
   input_path=$CONFIG_PATH
   if [ ! -f "$input_path" ]; then input_path=/dev/null; fi
   config_temp=$(mktemp "$CODEX_HOME_DIR/.codex-provider-setup.XXXXXX") \
@@ -1010,6 +1114,10 @@ invoke_configure() {
   if ! write_managed_provider "$config_temp"; then
     rm -f "$config_temp" "$manifest_temp"
     stop_setup "$(message GeneratedConfigInvalid 'Unable to append the provider configuration.')"
+  fi
+  if ! assert_generated_config "$config_temp" "$SELECTED_PROVIDER_ID"; then
+    rm -f "$config_temp" "$manifest_temp"
+    stop_setup "$GENERATED_CONFIG_ERROR"
   fi
   write_manifest "$manifest_temp" '' 1 \
     || stop_setup "$(message ConfigWriteFailed "$BACKUP_DIR" 'Unable to update the provider list.')"
@@ -1031,27 +1139,21 @@ invoke_restore() {
   if [ "$ORIGINAL_CONFIG_EXISTED" -eq 1 ] && [ ! -f "$BACKUP_CONFIG" ]; then
     stop_setup "$(message BackupDamaged "$BACKUP_CONFIG")"
   fi
-  read_choice "$(message RestoreChoiceTitle)" "$(message SelectOption)" \
+  [ "$ORIGINAL_CONFIG_EXISTED" -eq 1 ] || stop_setup "$(message NoRestorableConfig)"
+  read_choice "$(message RestoreConfirmTitle)" "$(message SelectOption)" \
     1 "$(message RestoreConfirmAction)" \
     2 "$(message CancelAction)"
   if [ "$CHOICE_VALUE" = 2 ]; then
     write_feedback_message "$(message RestoreCanceled)" Info
     return
   fi
-  if [ "$ORIGINAL_CONFIG_EXISTED" -eq 1 ]; then
-    restore_temp=$(mktemp "$CODEX_HOME_DIR/.codex-provider-restore.XXXXXX") \
-      || stop_setup "$(message ConfigWriteFailed "$BACKUP_DIR" 'Unable to create a restore file.')"
-    if ! cp "$BACKUP_CONFIG" "$restore_temp" || ! mv "$restore_temp" "$CONFIG_PATH"; then
-      rm -f "$restore_temp"
-      stop_setup "$(message ConfigWriteFailed "$BACKUP_DIR" 'Unable to restore config.toml.')"
-    fi
-    result=$(message ConfigRestored)
-  elif [ -f "$CONFIG_PATH" ]; then
-    rm -f "$CONFIG_PATH"
-    result=$(message ConfigDeleted)
-  else
-    result=$(message ConfigAlreadyAbsent)
+  restore_temp=$(mktemp "$CODEX_HOME_DIR/.codex-provider-restore.XXXXXX") \
+    || stop_setup "$(message ConfigWriteFailed "$BACKUP_DIR" 'Unable to create a restore file.')"
+  if ! cp "$BACKUP_CONFIG" "$restore_temp" || ! mv "$restore_temp" "$CONFIG_PATH"; then
+    rm -f "$restore_temp"
+    stop_setup "$(message ConfigWriteFailed "$BACKUP_DIR" 'Unable to restore config.toml.')"
   fi
+  result=$(message ConfigRestored)
   rm -rf "$BACKUP_DIR"
   write_feedback_table "$(message RestoreCompleteTitle)" Unordered \
     Success "$result" \
