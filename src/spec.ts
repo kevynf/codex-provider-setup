@@ -19,13 +19,12 @@ export interface SetupSpec {
 }
 
 export const setupSpec = {
-  version: "1.1.0",
+  version: "1.2.0",
   defaultProviderName: "OpenAI",
   modelPresets: [
-    { model: "gpt-6-sol", reasoningEffort: "medium", contextWindow: 272000 },
-    { model: "gpt-6-astra", reasoningEffort: "low", contextWindow: 272000 },
-    { model: "gpt-6-luna", reasoningEffort: "medium", contextWindow: 272000 },
-    { model: "gpt-5.6-sol", reasoningEffort: "medium", contextWindow: 272000 },
+    { model: "gpt-6-astra", reasoningEffort: "high", contextWindow: 1050000 },
+    { model: "gpt-6.1-sol", reasoningEffort: "high", contextWindow: 1050000 },
+    { model: "gpt-6-luna", reasoningEffort: "max", contextWindow: 1050000 },
   ],
   messages: {
     AppTitle: "Codex Provider Setup  v{0}",
