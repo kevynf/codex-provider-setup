@@ -25,16 +25,18 @@ jobs:
         run: test "${GITHUB_REF_NAME#v}" = "$(node -p "require('./package.json').version")"
       - run: pnpm fmt:check
       - run: pnpm test
-      - run: shellcheck -x dist/codex-provider-setup.sh tests/adapters/runtime.sh tests/shell/codex-provider-setup.Tests.sh
+      - run: shellcheck -x dist/codex-provider-setup.sh dist/claude-provider-setup.sh tests/adapters/runtime.sh tests/shell/codex-provider-setup.Tests.sh tests/shell/claude-provider-setup.Tests.sh
       - name: Create checksums
         run: |
           cd dist
-          sha256sum codex-provider-setup.ps1 codex-provider-setup.sh > SHA256SUMS
+          sha256sum codex-provider-setup.ps1 codex-provider-setup.sh claude-provider-setup.ps1 claude-provider-setup.sh > SHA256SUMS
       - uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
             dist/codex-provider-setup.ps1
             dist/codex-provider-setup.sh
+            dist/claude-provider-setup.ps1
+            dist/claude-provider-setup.sh
             dist/SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
@@ -42,4 +44,6 @@ jobs:
           files: |
             dist/codex-provider-setup.ps1
             dist/codex-provider-setup.sh
+            dist/claude-provider-setup.ps1
+            dist/claude-provider-setup.sh
             dist/SHA256SUMS

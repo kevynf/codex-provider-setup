@@ -35,4 +35,4 @@ jobs:
       - run: pnpm fmt:check
       - run: pnpm test:shell
       - if: runner.os == 'Linux'
-        run: shellcheck -x dist/codex-provider-setup.sh tests/adapters/runtime.sh tests/shell/codex-provider-setup.Tests.sh
+        run: shellcheck -x dist/codex-provider-setup.sh dist/claude-provider-setup.sh tests/adapters/runtime.sh tests/shell/codex-provider-setup.Tests.sh tests/shell/claude-provider-setup.Tests.sh

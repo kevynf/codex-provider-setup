@@ -34,8 +34,12 @@ jobs:
           mkdir public
           cp dist/codex-provider-setup.ps1 public/setup.ps1
           cp dist/codex-provider-setup.sh public/setup.sh
+          cp dist/claude-provider-setup.ps1 public/claude-provider-setup.ps1
+          cp dist/claude-provider-setup.sh public/claude-provider-setup.sh
+          cp dist/claude-provider-setup.ps1 public/cc-setup.ps1
+          cp dist/claude-provider-setup.sh public/cc-setup.sh
           cd public
-          sha256sum setup.ps1 setup.sh > SHA256SUMS
+          sha256sum setup.ps1 setup.sh claude-provider-setup.ps1 claude-provider-setup.sh cc-setup.ps1 cc-setup.sh > SHA256SUMS
       - uses: actions/configure-pages@v6
         with:
           enablement: true

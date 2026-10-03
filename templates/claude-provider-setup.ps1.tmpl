@@ -1,0 +1,252 @@
+<#
+Claude Code Provider Setup -- configure an Anthropic-compatible endpoint.
+
+Run:
+  pwsh -NoProfile -File .\claude-provider-setup.ps1
+#>
+
+# {{GENERATED_HEADER}}
+# {{SCRIPT_VERSION}}
+
+$ErrorActionPreference = 'Stop'
+$ClaudeConfigDir = if ($env:CLAUDE_CONFIG_DIR) {
+    $env:CLAUDE_CONFIG_DIR
+} else {
+    Join-Path $HOME '.claude'
+}
+$SettingsPath = Join-Path $ClaudeConfigDir 'settings.json'
+$BackupDir = Join-Path $ClaudeConfigDir '.provider-backup'
+$BackupSettings = Join-Path $BackupDir 'settings.json'
+$ManifestPath = Join-Path $BackupDir 'manifest.txt'
+
+function Write-Message {
+    param(
+        [string] $Type,
+        [string] $Content
+    )
+
+    $styles = @{ info = 'Cyan'; success = 'Green'; warning = 'Yellow'; error = 'Red' }
+    $markers = @{ info = 'i'; success = '+'; warning = '!'; error = 'X' }
+    if (-not $styles.ContainsKey($Type)) {
+        throw "Unknown message type: $Type"
+    }
+    Write-Host "[$($markers[$Type])] $Content" -ForegroundColor $styles[$Type]
+}
+
+function Read-Value {
+    param(
+        [string] $Prompt,
+        [switch] $Secure
+    )
+
+    if ($Secure) {
+        $secureValue = Read-Host $Prompt -AsSecureString
+        $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureValue)
+        try {
+            return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+        } finally {
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+        }
+    }
+    return Read-Host $Prompt
+}
+
+function Read-Required {
+    param(
+        [string] $Prompt,
+        [switch] $Secure
+    )
+
+    while ($true) {
+        $value = Read-Value $Prompt -Secure:$Secure
+        if ($value) {
+            return $value
+        }
+        Write-Message warning 'This value cannot be empty.'
+    }
+}
+
+function Resolve-BaseUrl {
+    param([string] $Value)
+
+    if (-not $Value) {
+        throw 'The Base URL cannot be empty.'
+    }
+    if ($Value -notmatch '^https?://') {
+        if ($Value -match '^(localhost|0\.0\.0\.0|127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|\[::1\])') {
+            $Value = "http://$Value"
+        } else {
+            $Value = "https://$Value"
+        }
+    }
+    $uri = [Uri] $Value
+    if ($uri.Scheme -notin @( 'http', 'https' ) -or -not $uri.Host -or $uri.UserInfo) {
+        throw "Invalid Base URL: $Value"
+    }
+    return $Value
+}
+
+function Initialize-Backup {
+    if (Test-Path -LiteralPath $BackupDir) {
+        if (
+            (Get-Content -LiteralPath $ManifestPath -Raw -ErrorAction SilentlyContinue) -notmatch
+            '(?m)^original_settings_existed=1\r?$'
+        ) {
+            return $false
+        }
+        if (-not (Test-Path -LiteralPath $BackupSettings)) {
+            throw "Backup is damaged: $BackupSettings"
+        }
+        return $true
+    }
+    $existed = Test-Path -LiteralPath $SettingsPath
+    New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
+    if ($existed) {
+        Copy-Item -LiteralPath $SettingsPath -Destination $BackupSettings -Force
+    }
+    Set-Content -LiteralPath $ManifestPath -Value @(
+        'format_version=1'
+        "script_version=$SCRIPT_VERSION"
+        "original_settings_existed=$(if ($existed) { 1 } else { 0 })"
+    ) -Encoding UTF8
+    return $true
+}
+
+function Write-Settings {
+    param(
+        [string] $Provider,
+        [string] $BaseUrl,
+        [string] $Model,
+        [string] $Token
+    )
+
+    $settings = if (Test-Path -LiteralPath $SettingsPath) {
+        $text = Get-Content -LiteralPath $SettingsPath -Raw -Encoding UTF8
+        if ($text.Trim()) {
+            $text | ConvertFrom-Json
+        } else {
+            [pscustomobject] @{}
+        }
+    } else {
+        [pscustomobject] @{}
+    }
+    if (-not $settings) {
+        $settings = [pscustomobject] @{}
+    }
+    if ($settings -is [array]) {
+        throw 'settings.json must contain an object.'
+    }
+    $settingsPropertyNames = @(
+        $settings.PSObject.Properties | ForEach-Object {
+            $_.Name
+        }
+    )
+    if (-not ($settingsPropertyNames -contains 'env') -or $null -eq $settings.env) {
+        $settings | Add-Member -NotePropertyName env -NotePropertyValue ([pscustomobject] @{})
+    }
+    $envPropertyNames = @(
+        $settings.env.PSObject.Properties | ForEach-Object {
+            $_.Name
+        }
+    )
+    foreach (
+        $property in @(
+            @{ Name = 'ANTHROPIC_BASE_URL'; Value = $BaseUrl },
+            @{ Name = 'ANTHROPIC_AUTH_TOKEN'; Value = $Token }
+        )
+    ) {
+        if ($property.Name -in $envPropertyNames) {
+            $settings.env.($property.Name) = $property.Value
+        } else {
+            $settings.env | Add-Member -NotePropertyName $property.Name -NotePropertyValue $property.Value
+        }
+    }
+    $defaultModelKeys = @(
+        'ANTHROPIC_DEFAULT_OPUS_MODEL',
+        'ANTHROPIC_DEFAULT_SONNET_MODEL',
+        'ANTHROPIC_DEFAULT_HAIKU_MODEL'
+    )
+    $envPropertyNames = @(
+        $settings.env.PSObject.Properties | ForEach-Object {
+            $_.Name
+        }
+    )
+    $hasDefaultModel = @(
+        $defaultModelKeys | Where-Object {
+            $_ -in $envPropertyNames -and [bool] $settings.env.$_
+        }
+    ).Count -gt 0
+    if (-not $hasDefaultModel) {
+        foreach ($name in $defaultModelKeys) {
+            if ($name -in $envPropertyNames) {
+                $settings.env.$name = $Model
+            } else {
+                $settings.env | Add-Member -NotePropertyName $name -NotePropertyValue $Model
+            }
+        }
+    }
+    if (-not $hasDefaultModel -or 'ANTHROPIC_MODEL' -in $envPropertyNames) {
+        if ('ANTHROPIC_MODEL' -in $envPropertyNames) {
+            $settings.env.ANTHROPIC_MODEL = $Model
+        } else {
+            $settings.env | Add-Member -NotePropertyName ANTHROPIC_MODEL -NotePropertyValue $Model
+        }
+    }
+    if ('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC' -notin $envPropertyNames) {
+        $settings.env | Add-Member -NotePropertyName CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC -NotePropertyValue '1'
+    }
+    if ('ANTHROPIC_API_KEY' -in $envPropertyNames) {
+        $settings.env.PSObject.Properties.Remove('ANTHROPIC_API_KEY')
+    }
+    New-Item -ItemType Directory -Path $ClaudeConfigDir -Force | Out-Null
+    $temp = "$SettingsPath.$PID.tmp"
+    $settings | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $temp -Encoding UTF8
+    Move-Item -LiteralPath $temp -Destination $SettingsPath -Force
+}
+
+function Invoke-Configure {
+    Write-Message info "Claude Code config directory: $ClaudeConfigDir"
+    $provider = Read-Required 'Provider display name'
+    $baseUrlInput = Read-Value 'Anthropic Base URL [https://api.anthropic.com]'
+    if (-not $baseUrlInput) {
+        $baseUrlInput = 'https://api.anthropic.com'
+    }
+    $baseUrl = Resolve-BaseUrl $baseUrlInput
+    Write-Message warning 'Verify that you trust this Base URL. HTTP may send your API key without encryption.'
+    $model = Read-Value 'Claude model ID [claude-sonnet-4-5]'
+    if (-not $model) {
+        $model = 'claude-sonnet-4-5'
+    }
+    Write-Message warning 'The auth token will be stored as plain text in settings.json.'
+    $token = Read-Required 'Anthropic API key or auth token' -Secure
+    Initialize-Backup | Out-Null
+    Write-Settings $provider $baseUrl $model $token
+    Write-Message success "Updated $SettingsPath"
+    Write-Message success 'Restart Claude Code to use the new settings.'
+}
+
+function Invoke-Restore {
+    if (-not (Test-Path -LiteralPath $BackupDir)) {
+        Write-Message info 'No original settings.json backup is available.'
+        return
+    }
+    $manifest = Get-Content -LiteralPath $ManifestPath -Raw -ErrorAction SilentlyContinue
+    if ($manifest -notmatch '(?m)^original_settings_existed=1\r?$' -or -not (Test-Path -LiteralPath $BackupSettings)) {
+        Write-Message error 'No original settings.json backup is available.'
+        return
+    }
+    Copy-Item -LiteralPath $BackupSettings -Destination $SettingsPath -Force
+    Remove-Item -LiteralPath $BackupDir -Recurse -Force
+    Write-Message success 'Restored settings.json.'
+}
+
+if ($env:CLAUDE_PROVIDER_SETUP_SKIP_MAIN -ne '1') {
+    if ($args.Count -eq 0 -or $args[0] -eq 'configure') {
+        Invoke-Configure
+    } elseif ($args[0] -eq 'restore') {
+        Invoke-Restore
+    } else {
+        Write-Message error "Unknown action: $($args[0])"
+        exit 1
+    }
+}

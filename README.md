@@ -2,22 +2,24 @@
 
 Configure Codex with an OpenAI model preset or any Responses-compatible provider.
 
-## Run
+## Codex
 
-### Windows
+### Run
+
+#### Windows
 
 <!-- prettier-ignore -->
 ```powershell
 irm https://kevynf.github.io/codex-provider-setup/setup.ps1 | iex
 ```
 
-### Linux and macOS
+#### Linux and macOS
 
 ```sh
 curl -fsSL https://kevynf.github.io/codex-provider-setup/setup.sh | sh
 ```
 
-## Provider management
+### Provider management
 
 - **Add** creates and selects a preset or custom provider.
 - **Switch** selects a provider added earlier.
@@ -25,6 +27,34 @@ curl -fsSL https://kevynf.github.io/codex-provider-setup/setup.sh | sh
 - **Restore** returns `config.toml` to its state before the first setup.
 
 Unrelated settings and existing provider sections are preserved. The original config is backed up to `.provider-backup` under the Codex home directory. API keys remain in plain text in `config.toml`.
+
+## Claude Code (additional)
+
+### Run
+
+#### Windows
+
+<!-- prettier-ignore -->
+```powershell
+irm https://kevynf.github.io/codex-provider-setup/cc-setup.ps1 | iex
+```
+
+#### Linux and macOS
+
+```sh
+curl -fsSL https://kevynf.github.io/codex-provider-setup/cc-setup.sh | sh
+```
+
+### Provider management
+
+The Claude Code script uses `settings.json` under `CLAUDE_CONFIG_DIR` or
+`~/.claude` for an Anthropic-compatible provider.
+
+- **Configure** writes the Base URL, model, and auth token while preserving existing settings.
+- **Restore** returns the settings file to its state before the first setup.
+
+An existing settings file is backed up under `.provider-backup`. POSIX setup
+requires Node.js.
 
 ## Architecture
 
@@ -56,6 +86,8 @@ pnpm install
 pnpm fmt
 pnpm test
 ```
+
+`pnpm test` runs the Codex tests and the Claude Code tests.
 
 On Windows, also test Windows PowerShell 5.1:
 
