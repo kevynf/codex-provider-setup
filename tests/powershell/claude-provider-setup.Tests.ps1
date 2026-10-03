@@ -73,7 +73,12 @@ function Invoke-ClaudeConfigure {
 
         $value = $global:ClaudeAnswers.Dequeue()
         if ($AsSecureString) {
-            return ConvertTo-SecureString $value -AsPlainText -Force
+            $secure = New-Object System.Security.SecureString
+            foreach ($character in $value.ToCharArray()) {
+                $secure.AppendChar($character)
+            }
+            $secure.MakeReadOnly()
+            return $secure
         }
         return $value
     }
