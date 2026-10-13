@@ -7,8 +7,11 @@ Run:
 
 # {{GENERATED_HEADER}}
 # {{SCRIPT_VERSION}}
+# {{MESSAGES}}
+# {{TYPE_STYLES}}
 
 $ErrorActionPreference = 'Stop'
+$ABORT_SENTINEL = '__CLAUDE_PROVIDER_SETUP_ABORT__'
 $ClaudeConfigDir = if ($env:CLAUDE_CONFIG_DIR) {
     $env:CLAUDE_CONFIG_DIR
 } else {
@@ -19,71 +22,284 @@ $BackupDir = Join-Path $ClaudeConfigDir '.provider-backup'
 $BackupSettings = Join-Path $BackupDir 'settings.json'
 $ManifestPath = Join-Path $BackupDir 'manifest.txt'
 
+$script:HasInteractionUI = $false
+
+function Get-Message {
+    param(
+        [string] $Name,
+        [object[]] $Values = @()
+    )
+
+    $template = [string] $MESSAGES[$Name]
+    if ($Values.Count -eq 0) {
+        return $template
+    }
+    return ($template -f $Values)
+}
+
 function Write-Message {
     param(
+        [string] $Content,
         [string] $Type,
-        [string] $Content
+        [AllowEmptyString()] [string] $Suffix = '',
+        [switch] $NoNewline
     )
 
-    $styles = @{ info = 'Cyan'; success = 'Green'; warning = 'Yellow'; error = 'Red' }
-    $markers = @{ info = 'i'; success = '+'; warning = '!'; error = 'X' }
-    if (-not $styles.ContainsKey($Type)) {
-        throw "Unknown message type: $Type"
+    if ($TYPE_STYLES.ContainsKey($Type) -and $Type -notin @( 'Title', 'Ordered' )) {
+        $style = $TYPE_STYLES[$Type]
+        $marker = $style.Marker
+    } elseif ($Type -match '^\d+$') {
+        $style = $TYPE_STYLES.Ordered
+        $marker = $Type
+    } else {
+        throw "Unknown UI message type: $Type"
     }
-    Write-Host "[$($markers[$Type])] $Content" -ForegroundColor $styles[$Type]
+    Write-Host "[$marker] " -ForegroundColor $style.Color -NoNewline
+    Write-Host ($Content + $Suffix) -NoNewline:$NoNewline
 }
 
-function Read-Value {
+function Write-Title {
+    param([string] $Content)
+
+    Write-Host "${Content}:" -ForegroundColor $TYPE_STYLES.Title.Color
+}
+
+function Write-Input {
+    param([string] $Content)
+
+    Write-Message -Content $Content -Type 'Prompt' -Suffix ': ' -NoNewline
+}
+
+function Start-InteractionUI {
+    if ($script:HasInteractionUI) {
+        Write-Host ''
+    }
+    $script:HasInteractionUI = $true
+}
+
+function Write-Table {
     param(
-        [string] $Prompt,
-        [switch] $Secure
+        [string] $Title,
+        [string[]] $Items,
+        [string[]] $Types = @(),
+        [ValidateSet('Ordered', 'Unordered')]
+        [string] $Kind = 'Unordered'
     )
 
-    if ($Secure) {
-        $secureValue = Read-Host $Prompt -AsSecureString
-        $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureValue)
-        try {
-            return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
-        } finally {
-            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+    Write-Title -Content $Title
+    for ($index = 0; $index -lt $Items.Count; $index++) {
+        $type = if ($Kind -eq 'Ordered') {
+            $Types[$index]
+        } elseif ($Types.Count -gt $index) {
+            $Types[$index]
+        } else {
+            'Info'
         }
+        Write-Message -Content $Items[$index] -Type $type
     }
-    return Read-Host $Prompt
 }
 
-function Read-Required {
+function Get-FieldItems {
     param(
-        [string] $Prompt,
-        [switch] $Secure
+        [string[]] $Keys,
+        [string[]] $Values
     )
 
-    while ($true) {
-        $value = Read-Value $Prompt -Secure:$Secure
+    $items = New-Object 'System.Collections.Generic.List[string]'
+    for ($index = 0; $index -lt $Values.Count; $index++) {
+        $items.Add("$($Keys[$index]): $($Values[$index])")
+    }
+    return $items.ToArray()
+}
+
+function Read-Input {
+    param(
+        [string] $Prompt,
+        [switch] $AsSecureString
+    )
+
+    Write-Input -Content $Prompt
+    if ($AsSecureString) {
+        return (Read-Host -AsSecureString)
+    }
+    return (Read-Host)
+}
+
+function Read-InputUI {
+    [CmdletBinding(DefaultParameterSetName = 'Message')]
+    param(
+        [Parameter(Mandatory = $true, ParameterSetName = 'Message')]
+        [string] $MessageContent,
+        [Parameter(ParameterSetName = 'Message')]
+        [ValidateSet('Info', 'Detail', 'Success', 'Warning', 'Error')]
+        [string] $MessageType = 'Info',
+        [Parameter(Mandatory = $true, ParameterSetName = 'Table')]
+        [string] $TableTitle,
+        [Parameter(Mandatory = $true, ParameterSetName = 'Table')]
+        [string[]] $TableItems,
+        [Parameter(ParameterSetName = 'Table')]
+        [string[]] $TableTypes = @(),
+        [Parameter(ParameterSetName = 'Table')]
+        [ValidateSet('Ordered', 'Unordered')]
+        [string] $TableKind = 'Unordered',
+        [Parameter(Mandatory = $true)]
+        [string] $Prompt,
+        [switch] $AsSecureString
+    )
+
+    Start-InteractionUI
+    if ($PSCmdlet.ParameterSetName -eq 'Message') {
+        Write-Message -Content $MessageContent -Type $MessageType
+    } else {
+        Write-Table -Title $TableTitle -Items $TableItems -Types $TableTypes -Kind $TableKind
+    }
+    return (Read-Input -Prompt $Prompt -AsSecureString:$AsSecureString)
+}
+
+function Write-FeedbackUI {
+    [CmdletBinding(DefaultParameterSetName = 'Message')]
+    param(
+        [Parameter(Mandatory = $true, ParameterSetName = 'Message')]
+        [string] $MessageContent,
+        [Parameter(ParameterSetName = 'Message')]
+        [ValidateSet('Info', 'Detail', 'Success', 'Warning', 'Error')]
+        [string] $MessageType = 'Info',
+        [Parameter(Mandatory = $true, ParameterSetName = 'Table')]
+        [string] $TableTitle,
+        [Parameter(Mandatory = $true, ParameterSetName = 'Table')]
+        [string[]] $TableItems,
+        [Parameter(ParameterSetName = 'Table')]
+        [string[]] $TableTypes = @(),
+        [Parameter(ParameterSetName = 'Table')]
+        [ValidateSet('Ordered', 'Unordered')]
+        [string] $TableKind = 'Unordered'
+    )
+
+    Start-InteractionUI
+    if ($PSCmdlet.ParameterSetName -eq 'Message') {
+        Write-Message -Content $MessageContent -Type $MessageType
+    } else {
+        Write-Table -Title $TableTitle -Items $TableItems -Types $TableTypes -Kind $TableKind
+    }
+}
+
+function Stop-Setup {
+    param([string] $Message)
+
+    Write-FeedbackUI -MessageContent $Message -MessageType 'Error'
+    throw $ABORT_SENTINEL
+}
+
+function Read-RequiredValue {
+    param(
+        [string] $Message,
+        [string] $Prompt
+    )
+
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+        try {
+            $value = (Read-InputUI -MessageContent $Message -MessageType 'Info' -Prompt $Prompt).Trim()
+        } catch {
+            Stop-Setup (Get-Message 'InputUnavailable')
+        }
         if ($value) {
             return $value
         }
-        Write-Message warning 'This value cannot be empty.'
+        Write-FeedbackUI -MessageContent (Get-Message 'ValueRequired') -MessageType 'Warning'
     }
+    Stop-Setup (Get-Message 'ValueLimit')
+}
+
+function Read-ValueWithDefault {
+    param(
+        [string] $Title,
+        [string] $Prompt,
+        [string] $Default
+    )
+
+    $items = Get-FieldItems @((Get-Message 'DefaultField')) @($Default)
+    try {
+        $value = (
+            Read-InputUI -TableTitle $Title -TableItems $items -TableTypes @(
+                'Info'
+            ) -TableKind 'Unordered' -Prompt $Prompt
+        ).Trim()
+    } catch {
+        Stop-Setup (Get-Message 'InputUnavailable')
+    }
+    if ($value) {
+        return $value
+    }
+    return $Default
+}
+
+function Read-ApiKey {
+    param(
+        [string] $Title,
+        [string[]] $Items,
+        [string[]] $Types
+    )
+
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+        try {
+            $secureValue = Read-InputUI -TableTitle $Title -TableItems $Items -TableTypes $Types -TableKind 'Unordered' -Prompt (
+                Get-Message 'ClaudeApiKeyPrompt'
+            ) -AsSecureString
+        } catch {
+            Stop-Setup (Get-Message 'ApiKeyUnavailable')
+        }
+        $pointer = [IntPtr]::Zero
+        try {
+            $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureValue)
+            $plainValue = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+        } finally {
+            if ($pointer -ne [IntPtr]::Zero) {
+                [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+            }
+        }
+        if ($plainValue) {
+            if ($plainValue -match '[\r\n]') {
+                Stop-Setup (Get-Message 'ApiKeyLineBreaks')
+            }
+            return $plainValue
+        }
+        Write-FeedbackUI -MessageContent (Get-Message 'ApiKeyRequired') -MessageType 'Warning'
+    }
+    Stop-Setup (Get-Message 'ApiKeyLimit')
 }
 
 function Resolve-BaseUrl {
     param([string] $Value)
 
-    if (-not $Value) {
-        throw 'The Base URL cannot be empty.'
+    $candidate = $Value.Trim()
+    if (-not $candidate) {
+        Stop-Setup (Get-Message 'BaseUrlRequired')
     }
-    if ($Value -notmatch '^https?://') {
-        if ($Value -match '^(localhost|0\.0\.0\.0|127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|\[::1\])') {
-            $Value = "http://$Value"
+    if ($candidate -notmatch '^[A-Za-z][A-Za-z0-9+.-]*://') {
+        $localPattern = '^(?i)(localhost|0\.0\.0\.0|127(?:\.\d{1,3}){3}|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|\[::1\])(?::\d+)?(?:/|$)'
+        $scheme = if ($candidate -match $localPattern) {
+            'http'
         } else {
-            $Value = "https://$Value"
+            'https'
         }
+        $candidate = "${scheme}://$candidate"
+        Write-FeedbackUI -MessageContent (Get-Message 'BaseUrlExpanded' $candidate) -MessageType 'Detail'
     }
-    $uri = [Uri] $Value
-    if ($uri.Scheme -notin @( 'http', 'https' ) -or -not $uri.Host -or $uri.UserInfo) {
-        throw "Invalid Base URL: $Value"
+    $parsed = $null
+    if (-not [Uri]::TryCreate( $candidate, [UriKind]::Absolute, [ref] $parsed )) {
+        Stop-Setup (Get-Message 'BaseUrlInvalid' $candidate)
     }
-    return $Value
+    if ($parsed.Scheme -notin @( 'http', 'https' )) {
+        Stop-Setup (Get-Message 'BaseUrlScheme')
+    }
+    if ($parsed.UserInfo) {
+        Stop-Setup (Get-Message 'BaseUrlCredentials')
+    }
+    if (-not $parsed.Host) {
+        Stop-Setup (Get-Message 'BaseUrlInvalid' $candidate)
+    }
+    Write-FeedbackUI -MessageContent (Get-Message 'BaseUrlSecurityWarning') -MessageType 'Warning'
+    return $parsed.AbsoluteUri
 }
 
 function Initialize-Backup {
@@ -205,39 +421,49 @@ function Write-Settings {
 }
 
 function Invoke-Configure {
-    Write-Message info "Claude Code config directory: $ClaudeConfigDir"
-    $provider = Read-Required 'Provider display name'
-    $baseUrlInput = Read-Value 'Anthropic Base URL [https://api.anthropic.com]'
-    if (-not $baseUrlInput) {
-        $baseUrlInput = 'https://api.anthropic.com'
-    }
+    Write-FeedbackUI -TableTitle (Get-Message 'ClaudeAppTitle' $SCRIPT_VERSION) -TableItems @(
+        (Get-Message 'ClaudeConfigDir' $ClaudeConfigDir)
+    ) -TableTypes @('Detail') -TableKind 'Unordered'
+    $provider = Read-RequiredValue (Get-Message 'ClaudeProviderInputMessage') (Get-Message 'ClaudeProviderPrompt')
+    $baseUrlInput = Read-ValueWithDefault (Get-Message 'ClaudeBaseUrlInputTitle') (
+        Get-Message 'ClaudeDefaultBaseUrlPrompt'
+    ) 'https://api.anthropic.com'
     $baseUrl = Resolve-BaseUrl $baseUrlInput
-    Write-Message warning 'Verify that you trust this Base URL. HTTP may send your API key without encryption.'
-    $model = Read-Value 'Claude model ID [claude-sonnet-4-5]'
-    if (-not $model) {
-        $model = 'claude-sonnet-4-5'
+    $model = Read-ValueWithDefault (Get-Message 'ClaudeModelInputTitle') (
+        Get-Message 'ClaudeDefaultModelPrompt'
+    ) 'claude-sonnet-4-5'
+    $token = Read-ApiKey (Get-Message 'ClaudeApiKeyTitle') @((Get-Message 'ClaudeApiWarning')) @('Warning')
+    if (-not (Initialize-Backup)) {
+        Stop-Setup (Get-Message 'BackupIncomplete')
     }
-    Write-Message warning 'The auth token will be stored as plain text in settings.json.'
-    $token = Read-Required 'Anthropic API key or auth token' -Secure
-    Initialize-Backup | Out-Null
-    Write-Settings $provider $baseUrl $model $token
-    Write-Message success "Updated $SettingsPath"
-    Write-Message success 'Restart Claude Code to use the new settings.'
+    try {
+        Write-Settings $provider $baseUrl $model $token
+    } catch {
+        Stop-Setup $_.Exception.Message
+    }
+    Write-FeedbackUI -MessageContent (Get-Message 'ClaudeConfigUpdated' $SettingsPath) -MessageType 'Success'
+    Write-FeedbackUI -TableTitle (Get-Message 'ConfigCompleteTitle') -TableItems @(
+        "$(Get-Message 'ProviderField'): $provider",
+        "$(Get-Message 'BaseUrlField'): $baseUrl",
+        "$(Get-Message 'ModelField'): $model"
+    ) -TableTypes @( 'Change', 'Change', 'Change' ) -TableKind 'Unordered'
+    Write-FeedbackUI -MessageContent (Get-Message 'ClaudeRestart') -MessageType 'Info'
 }
 
 function Invoke-Restore {
     if (-not (Test-Path -LiteralPath $BackupDir)) {
-        Write-Message info 'No original settings.json backup is available.'
+        Write-FeedbackUI -MessageContent (Get-Message 'ClaudeNoRestorableConfig') -MessageType 'Info'
         return
     }
     $manifest = Get-Content -LiteralPath $ManifestPath -Raw -ErrorAction SilentlyContinue
     if ($manifest -notmatch '(?m)^original_settings_existed=1\r?$' -or -not (Test-Path -LiteralPath $BackupSettings)) {
-        Write-Message error 'No original settings.json backup is available.'
+        Write-FeedbackUI -MessageContent (Get-Message 'ClaudeNoRestorableConfig') -MessageType 'Error'
         return
     }
+    Write-FeedbackUI -MessageContent "$(Get-Message 'ClaudeRestoreTitle'). $(Get-Message 'ClaudeRestoreWarning')" -MessageType 'Warning'
     Copy-Item -LiteralPath $BackupSettings -Destination $SettingsPath -Force
     Remove-Item -LiteralPath $BackupDir -Recurse -Force
-    Write-Message success 'Restored settings.json.'
+    Write-FeedbackUI -MessageContent (Get-Message 'ClaudeRestored') -MessageType 'Success'
 }
 
 if ($env:CLAUDE_PROVIDER_SETUP_SKIP_MAIN -ne '1') {
@@ -246,7 +472,7 @@ if ($env:CLAUDE_PROVIDER_SETUP_SKIP_MAIN -ne '1') {
     } elseif ($args[0] -eq 'restore') {
         Invoke-Restore
     } else {
-        Write-Message error "Unknown action: $($args[0])"
+        Write-FeedbackUI -MessageContent "Unknown action: $($args[0])" -MessageType 'Error'
         exit 1
     }
 }

@@ -121,6 +121,23 @@ message() {
     BackupRemoved) printf '%s' 'Removed the backup directory.' ;;
     RestoreCompleteTitle) printf '%s' 'Restore complete' ;;
     CodexHomeMissing) printf 'Codex config directory not found: %s. Run Codex CLI once or set CODEX_HOME, then try again.' "${1-}" ;;
+    ClaudeAppTitle) printf 'Claude Code Provider Setup  v%s' "${1-}" ;;
+    ClaudeConfigDir) printf 'Claude Code config directory: %s' "${1-}" ;;
+    ClaudeProviderInputMessage) printf '%s' 'Specify the provider display name.' ;;
+    ClaudeProviderPrompt) printf '%s' 'Provider display name' ;;
+    ClaudeBaseUrlInputTitle) printf '%s' 'Anthropic Base URL' ;;
+    ClaudeDefaultBaseUrlPrompt) printf '%s' 'Enter Base URL or press Enter to use the default' ;;
+    ClaudeModelInputTitle) printf '%s' 'Claude model ID' ;;
+    ClaudeDefaultModelPrompt) printf '%s' 'Enter model ID or press Enter to use the default' ;;
+    ClaudeApiKeyTitle) printf '%s' 'Authentication' ;;
+    ClaudeApiKeyPrompt) printf '%s' 'Anthropic API key or auth token' ;;
+    ClaudeApiWarning) printf '%s' 'The auth token will be stored as plain text in settings.json.' ;;
+    ClaudeConfigUpdated) printf 'Updated %s' "${1-}" ;;
+    ClaudeRestart) printf '%s' 'Restart Claude Code to use the new settings.' ;;
+    ClaudeRestoreTitle) printf '%s' 'Restore the pre-setup Claude Code settings' ;;
+    ClaudeRestoreWarning) printf '%s' 'Restore will overwrite all manual changes made to settings.json after setup.' ;;
+    ClaudeNoRestorableConfig) printf '%s' 'No original settings.json backup is available.' ;;
+    ClaudeRestored) printf '%s' 'Restored settings.json.' ;;
     *) return 1 ;;
   esac
 }
