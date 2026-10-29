@@ -2,8 +2,7 @@
 
 Configure Codex with an OpenAI model preset or any Responses-compatible provider.
 
-The generated setup scripts are published at:
-https://app.kevy.net/codex-provider-setup/
+The generated setup scripts are published under the following URLs:
 
 ## Codex
 
