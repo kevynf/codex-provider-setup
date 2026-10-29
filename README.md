@@ -2,6 +2,9 @@
 
 Configure Codex with an OpenAI model preset or any Responses-compatible provider.
 
+The generated setup scripts are published at:
+https://app.kevy.net/codex-provider-setup/
+
 ## Codex
 
 ### Run
@@ -10,13 +13,13 @@ Configure Codex with an OpenAI model preset or any Responses-compatible provider
 
 <!-- prettier-ignore -->
 ```powershell
-irm https://kevynf.github.io/codex-provider-setup/setup.ps1 | iex
+irm https://app.kevy.net/codex-provider-setup/setup.ps1 | iex
 ```
 
 #### Linux and macOS
 
 ```sh
-curl -fsSL https://kevynf.github.io/codex-provider-setup/setup.sh | sh
+curl -fsSL https://app.kevy.net/codex-provider-setup/setup.sh | sh
 ```
 
 ### Provider management
@@ -36,13 +39,13 @@ Unrelated settings and existing provider sections are preserved. The original co
 
 <!-- prettier-ignore -->
 ```powershell
-irm https://kevynf.github.io/codex-provider-setup/cc-setup.ps1 | iex
+irm https://app.kevy.net/codex-provider-setup/cc-setup.ps1 | iex
 ```
 
 #### Linux and macOS
 
 ```sh
-curl -fsSL https://kevynf.github.io/codex-provider-setup/cc-setup.sh | sh
+curl -fsSL https://app.kevy.net/codex-provider-setup/cc-setup.sh | sh
 ```
 
 ### Provider management
